@@ -241,3 +241,16 @@ function sdc_common_setup()
     sdc_enable_cron
 }
 
+#
+# Create the setup_complete file and prepare to copy the log. This should be
+# called as the last thing before setup exits.
+#
+function sdc_setup_complete()
+{
+    touch /var/svc/setup_complete
+    echo "setup done"
+
+    # we copy the log in the background in 5 seconds so that we get the exit
+    # in the log.
+    (sleep 5; cp /var/svc/setup.log /var/svc/setup_init.log) &
+}
