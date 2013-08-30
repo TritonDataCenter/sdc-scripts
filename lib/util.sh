@@ -42,6 +42,13 @@ function sdc_create_dcinfo()
     [[ -n ${dc_name} ]] && echo "SDC_DATACENTER_NAME=\"${dc_name}\"" > /.dcinfo
 }
 
+function sdc_install_bashrc()
+{
+    if [[ -f /opt/smartdc/sdc-boot/etc/root.bashrc ]]; then
+        cp /opt/smartdc/sdc-boot/etc/root.bashrc /root/.bashrc
+    fi
+}
+
 function sdc_setup_amon_agent()
 {
     if [[ ! -f /var/svc/setup_complete ]]; then
@@ -220,7 +227,9 @@ function sdc_enable_cron()
 function sdc_common_setup()
 {
     sdc_load_variables
+    echo "Performing setup of ${ZONE_ROLE} zone"
     sdc_create_dcinfo
+    sdc_install_bashrc
     sdc_setup_amon_agent
 
     if [[ ! -f /var/svc/setup_complete ]]; then
