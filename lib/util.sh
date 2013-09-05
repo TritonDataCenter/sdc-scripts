@@ -44,8 +44,8 @@ function sdc_create_dcinfo()
 
 function sdc_install_bashrc()
 {
-    if [[ -f /opt/smartdc/sdc-boot/etc/root.bashrc ]]; then
-        cp /opt/smartdc/sdc-boot/etc/root.bashrc /root/.bashrc
+    if [[ -f /opt/smartdc/boot/etc/root.bashrc ]]; then
+        cp /opt/smartdc/boot/etc/root.bashrc /root/.bashrc
     fi
 }
 
