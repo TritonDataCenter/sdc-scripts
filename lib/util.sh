@@ -235,13 +235,27 @@ function sdc_common_setup()
     if [[ ! -f /var/svc/setup_complete ]]; then
         echo "Initializing SAPI metadata and config-agent"
 
+        if [[ ${ZONE_ROLE} == "sapi" ]]; then
+            # after the first SAPI is created, SAPI_MODE should be in the sapi metadata
+            # for all future images.
+            SAPI_MODE=$(mdata-get SAPI_MODE)
+            [[ -n ${SAPI_MODE} ]] || SAPI_MODE="proto"
+        fi
+
         if [[ ${ZONE_ROLE} != "assets" && ${ZONE_ROLE} != "sapi" ]]; then
             sapi_adopt
-            setup_config_agent
-            upload_values
-            download_metadata
-            write_initial_config
-            registrar_setup
+        fi
+
+        if [[ ${ZONE_ROLE} != "assets" ]]; then
+            if [[ ${ZONE_ROLE} == "sapi" && ${SAPI_MODE} != "full" ]]; then
+                echo "Skipping config_agent setup as this is the first SAPI."
+            else
+                setup_config_agent
+                upload_values
+                download_metadata
+                write_initial_config
+                registrar_setup
+            fi
         fi
     else
         echo "Already setup, skipping SAPI and registrar initialization."
