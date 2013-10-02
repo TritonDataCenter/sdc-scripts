@@ -224,6 +224,56 @@ function sdc_enable_cron()
     svcadm enable cron
 }
 
+
+# Add an entry to /etc/logadm.conf for hourly log rotation of important sdc
+# logs.
+#
+# Usage:
+#   sdc_logadm_add <name> <file-pattern> [<size-limit>]
+#
+# "<name>" is a short string (spaces and '_' are NOT allowed) name for
+# this log set. "<file-pattern>" is the path to the file (or a file pattern)
+# to rotate. If a pattern it should resolve to a single file -- i.e. allowing
+# a pattern is just for convenience. "<size-limit>" is an optional upper size
+# limit on all the rotated logs. It corresponds to the '-S size' argument in
+# logadm(1m).
+#
+# Examples:
+#   sdc_logadm_add imgapi /var/svc/log/*imgapi*.log 1g
+#
+function sdc_logadm_add {
+    [[ $# -ge 1 ]] || fatal "sdc_logadm_add requires at least 1 argument"
+    local name=$1
+    local pattern="$2"
+    local size=$3
+    local extra_opts=
+    if [[ -n "$size" ]]; then
+        extra_opts="$extra_opts -S $size"
+    fi
+    logadm -w $name $extra_opts -C 168 -c -p 1h \
+        -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:00:00.log" \
+        -a "rm -f /var/log/sdc/${name}.lasthour.log && ln \$(ls -1t /var/log/sdc/upload/${name}_* | head -1) /var/log/sdc/${name}.lasthour.log" \
+        "$pattern" || fatal "unable to create $name logadm entry"
+}
+
+# Setup cron to run logadm hourly.
+function sdc_cron_logadm {
+    crontab=/tmp/$role-$$.cron
+    # Remove the existing default daily logadm.
+    crontab -l | sed '/# Rotate system logs/d; /\/usr\/sbin\/logadm$/d' >$crontab
+    [[ $? -eq 0 ]] || fatal "Unable to write to $crontab"
+    grep logadm $crontab >/dev/null \
+        && fatal "Not all 'logadm' references removed from crontab"
+    echo '' >>$crontab
+    # Add an hourly logadm.
+    echo '0 * * * * /usr/sbin/logadm' >>$crontab
+    crontab $crontab
+    [[ $? -eq 0 ]] || fatal "Unable import crontab"
+    rm -f $crontab
+}
+
+
+
 function sdc_common_setup()
 {
     sdc_load_variables
