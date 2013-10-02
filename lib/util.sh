@@ -225,6 +225,12 @@ function sdc_enable_cron()
 }
 
 
+function _sdc_log_rotation_setup {
+    mkdir -p /var/log/sdc/upload
+    chown root:sys /var/log/sdc
+    chown root:sys /var/log/sdc/upload
+}
+
 # Add an entry to /etc/logadm.conf for hourly log rotation of important sdc
 # logs.
 #
@@ -239,9 +245,10 @@ function sdc_enable_cron()
 # logadm(1m).
 #
 # Examples:
-#   sdc_logadm_add imgapi /var/svc/log/*imgapi*.log 1g
+#   sdc_log_rotation_add amon-agent /var/svc/log/*amon-agent*.log 1g
+#   sdc_log_rotation_add imgapi /var/svc/log/*imgapi*.log 1g
 #
-function sdc_logadm_add {
+function sdc_log_rotation_add {
     [[ $# -ge 1 ]] || fatal "sdc_logadm_add requires at least 1 argument"
     local name=$1
     local pattern="$2"
@@ -256,9 +263,14 @@ function sdc_logadm_add {
         "$pattern" || fatal "unable to create $name logadm entry"
 }
 
-# Setup cron to run logadm hourly.
-function sdc_cron_logadm {
-    crontab=/tmp/$role-$$.cron
+# TODO(HEAD-1365): Once ready for all sdc zones, move this to sdc_setup_complete
+function sdc_log_rotation_setup_end {
+    # Move the smf_logs entry to run last (after the entries we just added) so
+    # that the default '-C 3' doesn't defeat our attempts to save out.
+    logadm -r smf_logs
+    logadm -w smf_logs -C 3 -c -s 1m '/var/svc/log/*.log'
+
+    crontab=/tmp/.sdc_log_rotation_end-$$.cron
     # Remove the existing default daily logadm.
     crontab -l | sed '/# Rotate system logs/d; /\/usr\/sbin\/logadm$/d' >$crontab
     [[ $? -eq 0 ]] || fatal "Unable to write to $crontab"
@@ -281,6 +293,7 @@ function sdc_common_setup()
     sdc_create_dcinfo
     sdc_install_bashrc
     sdc_setup_amon_agent
+    _sdc_log_rotation_setup
 
     if [[ ! -f /var/svc/setup_complete ]]; then
         echo "Initializing SAPI metadata and config-agent"
