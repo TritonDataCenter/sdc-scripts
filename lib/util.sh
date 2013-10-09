@@ -257,9 +257,18 @@ function sdc_log_rotation_add {
     if [[ -n "$size" ]]; then
         extra_opts="$extra_opts -S $size"
     fi
+
+    # The '-a' command is doing two things here:
+    # 1. It is taking the "...T%H:%M:%S.log" rotated log file and any others for
+    #    the same hour and cat'ing them into "...T%H:00:00.log". This is to
+    #    support more-than-once-per-hour rotations ending up as one correct
+    #    hourly log file in Manta. This is needed to not lose log data through
+    #    a "vmadm reprovision" (as is done currently for upgrades).
+    # 2. It creates a convenience /var/log/sdc/$name.lasthour.log file as a
+    #    stable name for tooling to look at recent logs.
     logadm -w $name $extra_opts -C 168 -c -p 1h \
-        -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:00:00.log" \
-        -a "rm -f /var/log/sdc/${name}.lasthour.log && ln \$(ls -1t /var/log/sdc/upload/${name}_* | head -1) /var/log/sdc/${name}.lasthour.log" \
+        -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:%M:%S.log" \
+        -a "hourpat=\$(ls -1t /var/log/sdc/upload/${name}_* | head -1 | cut -d: -f1); cat \$hourpat*.log >\$hourpat.catlog && rm \$hourpat*.log && mv \$hourpat.catlog \$hourpat:00:00.log; rm -f /var/log/sdc/${name}.lasthour.log && ln \$(ls -1t /var/log/sdc/upload/${name}_* | head -1) /var/log/sdc/${name}.lasthour.log" \
         "$pattern" || fatal "unable to create $name logadm entry"
 }
 
