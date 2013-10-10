@@ -249,8 +249,10 @@ function _sdc_log_rotation_setup {
 #   sdc_log_rotation_add imgapi /var/svc/log/*imgapi*.log 1g
 #
 function sdc_log_rotation_add {
-    [[ $# -ge 1 ]] || fatal "sdc_logadm_add requires at least 1 argument"
+    [[ $# -ge 1 ]] || fatal "sdc_log_rotation_add requires at least 1 argument"
     local name=$1
+    [[ -n "$(echo "$name" | (egrep '(_| )' || true))" ]] \
+        && fatal "sdc_log_rotation_add 'name' cannot include spaces or underscores: '$name'"
     local pattern="$2"
     local size=$3
     local extra_opts=
