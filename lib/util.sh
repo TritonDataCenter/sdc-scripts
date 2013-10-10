@@ -268,7 +268,7 @@ function sdc_log_rotation_add {
     #    stable name for tooling to look at recent logs.
     logadm -w $name $extra_opts -C 168 -c -p 1h \
         -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:%M:%S.log" \
-        -a "hourpat=\$(ls -1t /var/log/sdc/upload/${name}_* | head -1 | cut -d: -f1); cat \$hourpat*.log >\$hourpat.catlog && rm \$hourpat*.log && mv \$hourpat.catlog \$hourpat:00:00.log; rm -f /var/log/sdc/${name}.lasthour.log && ln \$(ls -1t /var/log/sdc/upload/${name}_* | head -1) /var/log/sdc/${name}.lasthour.log" \
+        -a "/opt/smartdc/boot/sbin/postlogrotate.sh ${name}" \
         "$pattern" || fatal "unable to create $name logadm entry"
 }
 
