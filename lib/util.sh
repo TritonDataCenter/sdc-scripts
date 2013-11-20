@@ -229,6 +229,10 @@ function _sdc_log_rotation_setup {
     mkdir -p /var/log/sdc/upload
     chown root:sys /var/log/sdc
     chown root:sys /var/log/sdc/upload
+
+    # Ensure that log rotation HUPs *r*syslog.
+    logadm -r /var/adm/messages
+    logadm -w /var/adm/messages -C 4 -a 'kill -HUP `cat /var/run/rsyslog.pid`'
 }
 
 # Add an entry to /etc/logadm.conf for hourly log rotation of important sdc
