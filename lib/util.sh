@@ -1,6 +1,28 @@
 #!/usr/bin/bash
 #
-# Copyright (c) 2013, Joyent Inc. All rights reserved.
+# Copyright (c) 2014, Joyent Inc. All rights reserved.
+#
+# Usage in a SDC core zone "boot/setup.sh" file:
+#
+#
+#   role=myapi
+#   ...
+#
+#   source /opt/smartdc/boot/lib/util.sh
+#   CONFIG_AGENT_LOCAL_MANIFESTS_DIRS=/opt/smartdc/$role
+#   sdc_common_setup
+#   ...
+#
+#   # Typically some log rotation setup. E.g.:
+#   echo "Adding log rotation"
+#   sdc_log_rotation_add amon-agent /var/svc/log/*amon-agent*.log 1g
+#   sdc_log_rotation_add config-agent /var/svc/log/*config-agent*.log 1g
+#   sdc_log_rotation_add registrar /var/svc/log/*registrar*.log 1g
+#   sdc_log_rotation_add $role /var/svc/log/*$role*.log 1g
+#   sdc_log_rotation_setup_end
+#
+#   # All done, run boilerplate end-of-setup
+#   sdc_setup_complete
 #
 
 function fatal() {
@@ -8,30 +30,14 @@ function fatal() {
     exit 1
 }
 
-#
-# This loads:
-#
-# sapi_url (when zone_role != sapi)
-# zone_role (and ZONE_ROLE)
-# zone_uuid
-#
-function sdc_load_variables()
+
+function _sdc_load_variables()
 {
-    zone_uuid=$(zonename)
-    zone_role=$(mdata-get sdc:tags.smartdc_role)
-    [[ -z ${zone_role} ]] && fatal "Unable to find zone role in metadata."
-
-    # If we're not SAPI, we need to know where SAPI is.
-    if [[ ${zone_role} != "sapi" ]]; then
-        sapi_url=$(mdata-get sapi-url)
-        [[ -z ${sapi_url} ]] && fatal "Unable to find IP of SAPI in metadata"
-    fi
-
-    # XXX we probably shouldn't need zone_role and ZONE_ROLE
-    export ZONE_ROLE="${zone_role}"
+    export ZONE_ROLE=$(mdata-get sdc:tags.smartdc_role)
+    [[ -z ${ZONE_ROLE} ]] && fatal "Unable to find zone role in metadata."
 }
 
-function sdc_create_dcinfo()
+function _sdc_create_dcinfo()
 {
     # Setup "/.dcinfo": info about the datacenter in which this zone runs
     # (used for a more helpful PS1 prompt).
@@ -42,14 +48,14 @@ function sdc_create_dcinfo()
     [[ -n ${dc_name} ]] && echo "SDC_DATACENTER_NAME=\"${dc_name}\"" > /.dcinfo
 }
 
-function sdc_install_bashrc()
+function _sdc_install_bashrc()
 {
     if [[ -f /opt/smartdc/boot/etc/root.bashrc ]]; then
         cp /opt/smartdc/boot/etc/root.bashrc /root/.bashrc
     fi
 }
 
-function sdc_setup_amon_agent()
+function _sdc_setup_amon_agent()
 {
     if [[ ! -f /var/svc/setup_complete ]]; then
         # Install and start the amon-agent.
@@ -58,7 +64,7 @@ function sdc_setup_amon_agent()
     fi
 }
 
-# Write out the config-agent's file
+
 function setup_config_agent()
 {
     echo "Setting up SAPI config-agent"
@@ -134,10 +140,10 @@ function upload_values()
                 ${update} PRIMARY_IP ${ip}
                 if [[ $? -ne 0 ]]; then
                   fatal "failed to upload PRIMARY_IP metadata"
-              fi
-          fi
-      fi
-  done
+                fi
+            fi
+        fi
+    done
 }
 
 #
@@ -151,7 +157,7 @@ function upload_values()
 # SAPI endpoint.
 #
 
-# Download this zone's SAPI metadata and save it in a local file
+# Download this zone's SAPI metadata and save it in a local file.
 function download_metadata()
 {
     export METADATA=/var/tmp/metadata.json
@@ -175,7 +181,9 @@ function write_initial_config()
     svcadm enable config-agent
 }
 
-# XXX - can be removed when sdc-role is backed by SAPI.
+
+# "sapi_adopt" means adding an "instance" record to SAPI's DB for this
+# instance.
 function sapi_adopt()
 {
     if [[ ${ZONE_ROLE} != "assets" && ${ZONE_ROLE} != "sapi" ]]; then
@@ -183,8 +191,6 @@ function sapi_adopt()
                         json -H uuid)
     fi
 
-    ## non-sapi services will be necessarily created by sdc-role
-    ## at this point, so we need to adopt them.
     if [[ -z ${sapi_instance} ]]; then
         # adopt this instance
         sapi_url=$(mdata-get sapi-url)
@@ -215,7 +221,7 @@ function registrar_setup()
     fi
 }
 
-function sdc_enable_cron()
+function _sdc_enable_cron()
 {
     # HEAD-1367 - Enable Cron. Since all zones using this are joyent-minimal,cron
     # is not enable by default. We want to enable it though, for log rotation.
@@ -291,33 +297,31 @@ function sdc_log_rotation_setup_end {
 }
 
 
-
+# Main entry point for an SDC core zone's "setup.sh". See top-comment.
+#
+# Optional input envvars:
+#   CONFIG_AGENT_LOCAL_MANIFESTS_DIRS=<space-separated-list-of-local-manifest-dirs>
+#   SAPI_PROTO_MODE=<true>
+#
 function sdc_common_setup()
 {
-    sdc_load_variables
+    _sdc_load_variables
     echo "Performing setup of ${ZONE_ROLE} zone"
-    sdc_create_dcinfo
-    sdc_install_bashrc
-    sdc_setup_amon_agent
+    _sdc_create_dcinfo
+    _sdc_install_bashrc
+    _sdc_setup_amon_agent
     _sdc_log_rotation_setup
 
     if [[ ! -f /var/svc/setup_complete ]]; then
         echo "Initializing SAPI metadata and config-agent"
-
-        if [[ ${ZONE_ROLE} == "sapi" ]]; then
-            # after the first SAPI is created, SAPI_MODE should be in the sapi metadata
-            # for all future images.
-            SAPI_MODE=$(mdata-get SAPI_MODE)
-            [[ -n ${SAPI_MODE} ]] || SAPI_MODE="proto"
-        fi
 
         if [[ ${ZONE_ROLE} != "assets" && ${ZONE_ROLE} != "sapi" ]]; then
             sapi_adopt
         fi
 
         if [[ ${ZONE_ROLE} != "assets" ]]; then
-            if [[ ${ZONE_ROLE} == "sapi" && ${SAPI_MODE} != "full" ]]; then
-                echo "Skipping config_agent setup as this is the first SAPI."
+            if [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == "true" ]]; then
+                echo "Skipping config-agent/SAPI instance setup: 'sapi' zone in proto mode"
             else
                 setup_config_agent
                 upload_values
@@ -330,7 +334,7 @@ function sdc_common_setup()
         echo "Already setup, skipping SAPI and registrar initialization."
     fi
 
-    sdc_enable_cron
+    _sdc_enable_cron
 }
 
 #
