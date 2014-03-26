@@ -201,7 +201,7 @@ function sapi_adopt()
         sapi_instance=$(curl ${sapi_url}/instances -sS -X POST \
             -H content-type:application/json \
             -d "{ \"service_uuid\" : \"${service_uuid}\", \"uuid\" : \"${uuid}\", \"params\": { \"alias\": \"${alias}\" } }" \
-            | uuid -H uuid)
+            | json -H uuid)
 
         [[ -n ${sapi_instance} ]] || fatal "Unable to adopt ${uuid} into SAPI"
         echo "Adopted service ${alias} to instance ${uuid}"
