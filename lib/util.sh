@@ -197,13 +197,14 @@ function sapi_adopt()
         service_uuid=$(curl ${sapi_url}/services?name=${ZONE_ROLE}\
             -sS -H accept:application/json | json -Ha uuid)
         uuid=$(zonename)
+        alias=$(mdata-get sdc:alias)
         sapi_instance=$(curl ${sapi_url}/instances -sS -X POST \
             -H content-type:application/json \
-            -d "{ \"service_uuid\" : \"${service_uuid}\", \"uuid\" : \"${uuid}\" }" \
-            | json -H uuid)
+            -d "{ \"service_uuid\" : \"${service_uuid}\", \"uuid\" : \"${uuid}\", \"params\": { \"alias\": \"${alias}\" } }" \
+            | uuid -H uuid)
 
-        [[ -n ${sapi_instance} ]] || fatal "Unable to adopt ${ZONE_NAME} into SAPI"
-        echo "Adopted service ${ZONE_NAME} to instance ${uuid}"
+        [[ -n ${sapi_instance} ]] || fatal "Unable to adopt ${uuid} into SAPI"
+        echo "Adopted service ${alias} to instance ${uuid}"
     fi
 }
 
