@@ -194,14 +194,36 @@ function sapi_adopt()
     if [[ -z ${sapi_instance} ]]; then
         # adopt this instance
         sapi_url=$(mdata-get sapi-url)
-        service_uuid=$(curl ${sapi_url}/services?name=${ZONE_ROLE}\
-            -sS -H accept:application/json | json -Ha uuid)
+
+        local service_uuid=""
+        local i=0
+        while [[ -z ${service_uuid} && ${i} -lt 48 ]]; do
+            service_uuid=$(curl ${sapi_url}/services?name=${ZONE_ROLE}\
+                -sS -H accept:application/json | json -Ha uuid)
+            if [[ -z ${service_uuid} ]]; then
+                echo "Unable to get server_uuid from sapi yet.  Sleeping..."
+                sleep 5
+            fi
+            i=$((${i} + 1))
+        done
+        [[ -n ${service_uuid} ]] || \
+            fatal "Unable to get service_uuid for role ${ZONE_ROLE} from SAPI"
+
         uuid=$(zonename)
         alias=$(mdata-get sdc:alias)
-        sapi_instance=$(curl ${sapi_url}/instances -sS -X POST \
-            -H content-type:application/json \
-            -d "{ \"service_uuid\" : \"${service_uuid}\", \"uuid\" : \"${uuid}\", \"params\": { \"alias\": \"${alias}\" } }" \
-            | json -H uuid)
+
+        i=0
+        while [[ -z ${sapi_instance} && ${i} -lt 48 ]]; do
+            sapi_instance=$(curl ${sapi_url}/instances -sS -X POST \
+                -H content-type:application/json \
+                -d "{ \"service_uuid\" : \"${service_uuid}\", \"uuid\" : \"${uuid}\", \"params\": { \"alias\": \"${alias}\" } }" \
+                | json -H uuid)
+            if [[ -z ${sapi_instance} ]]; then
+                echo "Unable to adopt ${uuid} into sapi yet.  Sleeping..."
+                sleep 5
+            fi
+            i=$((${i} + 1))
+        done
 
         [[ -n ${sapi_instance} ]] || fatal "Unable to adopt ${uuid} into SAPI"
         echo "Adopted service ${alias} to instance ${uuid}"
