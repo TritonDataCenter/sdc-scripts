@@ -25,6 +25,11 @@
 #   sdc_setup_complete
 #
 
+# TODO(HEAD-1983): finish validating using these with all SDC core zones.
+#set -o errexit
+#set -o pipefail
+
+
 function fatal() {
     echo "error: $*" >&2
     exit 1
@@ -34,7 +39,7 @@ function fatal() {
 function _sdc_load_variables()
 {
     export ZONE_ROLE=$(mdata-get sdc:tags.smartdc_role)
-    [[ -z ${ZONE_ROLE} ]] && fatal "Unable to find zone role in metadata."
+    [[ -n "${ZONE_ROLE}" ]] || fatal "Unable to find zone role in metadata."
 }
 
 function _sdc_create_dcinfo()
@@ -165,6 +170,7 @@ function download_metadata()
     local sapi_url=$(mdata-get sapi-url)
 
     curl -s ${sapi_url}/configs/$(zonename) | json metadata > ${METADATA}
+    # TODO(HEAD-1983): This won't work: json pipe looses retval.
     if [[ $? -ne 0 ]]; then
         fatal "failed to download metadata from SAPI"
     fi
