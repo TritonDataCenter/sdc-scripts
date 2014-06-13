@@ -136,14 +136,17 @@ function upload_values()
         tag=$(echo ${tag} | tr 'a-z' 'A-Z')
 
         if [[ -n ${ip} && -n ${tag} ]]; then
+            # If the update fails because this is a binder, it's because sapi
+            # won't take writes while it is in full mode and dependencies are
+            # down.
             ${update} ${tag}_IP ${ip}
-            if [[ $? -ne 0 ]]; then
+            if [[ $? -ne 0 ]] && [[ "$ZONE_ROLE" != 'binder' ]]; then
                 fatal "failed to upload ${tag}_IP metadata"
             fi
 
             if [[ $i == 0 ]]; then
                 ${update} PRIMARY_IP ${ip}
-                if [[ $? -ne 0 ]]; then
+                if [[ $? -ne 0 ]] && [[ "$ZONE_ROLE" != 'binder' ]]; then
                   fatal "failed to upload PRIMARY_IP metadata"
                 fi
             fi
