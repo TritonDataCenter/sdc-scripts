@@ -35,6 +35,17 @@ function fatal() {
     exit 1
 }
 
+# echo a true or false value
+function _bool() {
+    local bool_val
+    if [[ $1 == "true" ]]; then
+        bool_val=$1
+    else
+        bool_val="false"
+    fi
+
+    echo ${bool_val}
+}
 
 function _sdc_load_variables()
 {
@@ -69,6 +80,46 @@ function _sdc_setup_amon_agent()
     fi
 }
 
+function _sapi_load_variables()
+{
+    SAPI_URL=$(mdata-get sapi-url)
+    [[ -z ${SAPI_URL} ]] && fatal "Unable to mdata-get sapi_url"
+}
+
+function sapi_get() {
+    local i
+    local rc
+    local path=$1
+
+    [[ -z ${SAPI_URL} ]] && _sapi_load_variables
+
+    i=0
+    rc=1
+    while [[ -${rc} -ne 0 && ${i} -lt 48 ]]; do
+        curl ${SAPI_URL}${path} -sS -H accept:application/json
+        rc=$?
+        i=$((${i} + 1))
+    done
+}
+
+function sapi_put() {
+    local i
+    local rc
+    local path=$1
+    local payload=$2
+
+    [[ -z ${SAPI_URL} ]] && _sapi_load_variables
+
+    i=0
+    rc=1
+    while [[ -${rc} -ne 0 && ${i} -lt 48 ]]; do
+        curl ${SAPI_URL}${path} -sS -H accept:application/json -X PUT \
+            -H content-type:application/json \
+            -d "${payload}"
+        rc=$?
+        i=$((${i} + 1))
+    done
+}
 
 function setup_config_agent()
 {
@@ -381,4 +432,132 @@ function sdc_setup_complete()
     # we copy the log in the background in 5 seconds so that we get the exit
     # in the log.
     (sleep 5; cp /var/svc/setup.log /var/svc/setup_init.log) &
+}
+
+#
+# Register this service as requiring load-balancing
+#
+function lb_register()
+{
+    local http=$(_bool $1)
+    local https=$(_bool $2)
+    local ports=$3
+    local external=$(_bool $4)
+    local internal_http=$(_bool $5)
+
+    local app_uuid
+    local lbs
+    local lbs_after
+    local node=/opt/smartdc/config-agent/build/node/bin/node
+    local sapi_url
+    local svc_domain
+
+    if [[ ${http} == "false" && ${https} == "false" && -z ${ports} ]]; then
+        fatal "Must specify one of http, https, or ports"
+    fi
+
+    _sapi_load_variables
+
+    app_uuid=$(sapi_get /applications?name=sdc | \
+        json 0.uuid)
+    [[ -z ${app_uuid} ]] && fatal "Unable to get sdc application from SAPI"
+
+    [[ -z ${METADATA} ]] && download_metadata
+
+    svc_domain=$(json -f ${METADATA} SERVICE_DOMAIN)
+    [[ -z ${svc_domain} ]] && fatal "Can't find SERVICE_DOMAIN in ${METADATA}"
+
+    lbs=$(sapi_get /applications/${app_uuid} | \
+        json -o json-0 -H metadata.LB_SERVICES)
+
+    lbs_after=$(echo "${lbs}" | ${node} -e "
+        var boolParams = {
+            external: ${external},
+            http: ${http},
+            https: ${https},
+            internalHttp: ${internal_http}
+        };
+        var found = false;
+        var lbSvcs = [];
+        var ports = [ ${ports} ].sort();
+        var svcDomain = \"${svc_domain}\";
+
+        var stdin = require('fs').readFileSync('/dev/stdin').toString();
+
+        if (stdin && stdin != '\n') {
+            lbSvcs = JSON.parse(stdin);
+        }
+
+
+        function svcMatches(svc) {
+            var p;
+            // Don't stomp on our original copy of svc - we'll output that
+            // at the end of this file
+            var tmpSvc = {};
+
+            if (svc.domain != svcDomain) {
+                return false;
+            }
+
+            for (p in boolParams) {
+                if (svc.hasOwnProperty(p)) {
+                    tmpSvc[p] = svc[p];
+                } else {
+                    tmpSvc[p] = false;
+                }
+
+                if (boolParams[p] != tmpSvc[p]) {
+                    return false;
+                }
+            }
+
+            if (svc.hasOwnProperty('tcpPorts')) {
+                tmpSvc.tcpPorts = svc.tcpPorts.map(function (p) {
+                    return p;
+                }).sort();
+            } else {
+                tmpSvc.tcpPorts = [];
+            }
+
+            if (tmpSvc.tcpPorts.toString() != ports.toString()) {
+                return false;
+            }
+
+            return true;
+        }
+
+        for (var s in lbSvcs) {
+            delete lbSvcs[s].last;
+            if (!found && svcMatches(lbSvcs[s])) {
+                found = true;
+            }
+        }
+
+        if (!found) {
+            var newSvc = { domain: svcDomain, last: true };
+
+            if (ports.length !== 0)
+                newSvc.tcpPorts = ports;
+
+            for (var b in boolParams) {
+                if (boolParams[b])
+                    newSvc[b] = true;
+            }
+
+            lbSvcs.push(newSvc);
+            console.log(JSON.stringify({
+                metadata: {
+                    LB_SERVICES: lbSvcs
+                }
+            }));
+        }
+    ")
+
+    if [[ -n ${lbs_after} ]]; then
+        echo "Adding domain ${svc_domain} (mode ${mode}${port_msg})"
+        echo sapi_put /applications/${app_uuid} ${lbs_after}
+        sapi_put /applications/${app_uuid} ${lbs_after}
+    else
+        echo "Domain ${svc_domain} (mode ${mode}${port_msg}) is already in SAPI: not adding"
+    fi
 }
