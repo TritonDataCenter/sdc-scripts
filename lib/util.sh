@@ -137,7 +137,7 @@ function setup_config_agent()
     cat >${file} <<EOF
 {
     "logLevel": "info",
-    "pollInterval": 15000,
+    "pollInterval": 60000,
     "sapi": {
         "url": "${sapi_url}"
     }
