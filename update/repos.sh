@@ -20,7 +20,6 @@ REPOS=(
     cloud-analytics
     cloudapi
     cnapi
-    dapi
     fwapi
     imgapi
     manta-deployment
