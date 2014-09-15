@@ -20,31 +20,31 @@
 ###############################################################################
 
 REPOS=(
-    adminui
-    amon
-    amonredis
-    assets
     binder
-    booter
-    cloud-analytics
-    cloudapi
-    cnapi
-    fwapi
-    imgapi
-    manta-deployment
     mahi
     moray
-    napi
-    papi
-    rabbitmq
-    redis
-    sapi
+    sdc-adminui
+    sdc-amon
+    sdc-amonredis
+    sdc-assets
+    sdc-booter
+    sdc-cloud-analytics
+    sdc-cloudapi
+    sdc-cnapi
+    sdc-fwapi
+    sdc-imgapi
     sdc-manatee
-    sdc
+    sdc-manta
+    sdc-napi
+    sdc-papi
+    sdc-rabbitmq
+    sdc-redis
+    sdc-sapi
+    sdc-sdc
+    sdc-ufds
+    sdc-vmapi
+    sdc-workflow
     sdcsso
-    ufds
-    vmapi
-    workflow
 )
 PROBLEMS=( )
 DEP_LOC="deps/sdc-scripts"
