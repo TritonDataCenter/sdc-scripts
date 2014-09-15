@@ -8,7 +8,13 @@
     Copyright (c) 2014, Joyent, Inc.
 -->
 
-These files/scripts are used for configuring sdc zones.  Currently used are:
+# sdc-scripts
+
+This repository is part of the Joyent SmartDataCenter project (SDC).  For
+contribution guidelines, issues, and general documentation, visit the main
+[SDC](http://github.com/joyent/sdc) project page.
+
+The files/scripts here are used for configuring sdc zones.  Currently used are:
 
 setup.sh        - called once when first setting up the zone.
 configure.sh    - called on every zone boot.
