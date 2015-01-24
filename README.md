@@ -22,6 +22,12 @@ lib/util.sh     - contains common functions for setting up SDC zones.
 etc/root.bashrc - will be loaded as /root/.bashrc in SDC zones.
 
 The files in the sdc-scripts.git repo are copied in first and then the files
-in the zone's <repo>.git/boot directory are copied over.  This way the
+in the zone's `<repo>.git/boot` directory are copied over.  This way the
 sdc-scripts.git files act as defaults but the zone can (and must in the case
 of setup.sh and configure.sh) use its own files.
+
+## package.json
+
+This repo includes a package.json even though it isn't a Node.js package.
+It is used to hold a version. At the time of writing that version isn't
+used for anything but manually reading.

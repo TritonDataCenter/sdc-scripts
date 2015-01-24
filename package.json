@@ -1,0 +1,8 @@
+{
+  "name": "sdc-scripts",
+  "description": "Shared boot scripts for SDC core service zones",
+  "version": "1.1.0",
+  "author": "Joyent (joyent.com)",
+  "private": true,
+  "license": "MPL-2.0"
+}

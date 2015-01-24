@@ -127,39 +127,14 @@ function config_agent_add_manifest_dir
     mv ${tmpfile} ${file}
 }
 
-# Upload the IP addresses assigned to this zone into its metadata
+# SAPI-224: This was dropped, however we keep a stub here to not break
+# the call to 'upload_values' in the SAPI zone from headnode.sh in the
+# GZ in case we get a mix of old-headnode.sh + new-sapi-image.
+#
+# After some reasonable period, this stub could be dropped.
 function upload_values()
 {
-    echo "Updating IP metadata in SAPI"
-    local update=/opt/smartdc/config-agent/bin/mdata-update
-
-    # Let's assume a zone will have at most four NICs
-    for i in $(seq 0 3); do
-        local ip=$(mdata-get sdc:nics.${i}.ip)
-        [[ $? -eq 0 ]] || ip=""
-        local tag=$(mdata-get sdc:nics.${i}.nic_tag)
-        [[ $? -eq 0 ]] || tag=""
-
-        # Want tag name to be uppercase
-        tag=$(echo ${tag} | tr 'a-z' 'A-Z')
-
-        if [[ -n ${ip} && -n ${tag} ]]; then
-            # If the update fails because this is a binder, it's because sapi
-            # won't take writes while it is in full mode and dependencies are
-            # down.
-            ${update} ${tag}_IP ${ip}
-            if [[ $? -ne 0 ]] && [[ "$ZONE_ROLE" != 'binder' ]]; then
-                fatal "failed to upload ${tag}_IP metadata"
-            fi
-
-            if [[ $i == 0 ]]; then
-                ${update} PRIMARY_IP ${ip}
-                if [[ $? -ne 0 ]] && [[ "$ZONE_ROLE" != 'binder' ]]; then
-                  fatal "failed to upload PRIMARY_IP metadata"
-                fi
-            fi
-        fi
-    done
+    echo "Warning: 'upload_values' is deprecated."
 }
 
 #
@@ -364,7 +339,6 @@ function sdc_common_setup()
                 echo "Skipping config-agent/SAPI instance setup: 'sapi' zone in proto mode"
             else
                 setup_config_agent
-                upload_values
                 download_metadata
                 write_initial_config
                 registrar_setup
