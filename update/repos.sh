@@ -31,12 +31,14 @@ REPOS=(
     sdc-cloud-analytics
     sdc-cloudapi
     sdc-cnapi
+    sdc-docker
     sdc-fwapi
     sdc-imgapi
     sdc-manatee
     sdc-manta
     sdc-napi
     sdc-papi
+    sdc-portolan
     sdc-rabbitmq
     sdc-redis
     sdc-sapi
@@ -44,7 +46,6 @@ REPOS=(
     sdc-ufds
     sdc-vmapi
     sdc-workflow
-    sdcsso
 )
 PROBLEMS=( )
 DEP_LOC="deps/sdc-scripts"
