@@ -19,6 +19,14 @@
 # with repos, you can fix and safely rerun.
 ###############################################################################
 
+if [[ -n "$TRACE" ]]; then
+    export PS4='[\D{%FT%TZ}] ${BASH_SOURCE}:${LINENO}: ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
+    set -o xtrace
+fi
+set -o errexit
+set -o pipefail
+
+
 REPOS=(
     binder
     mahi
@@ -76,6 +84,7 @@ for repo in "${REPOS[@]}"; do
         continue
     fi
 
+    echo
     echo "Checking $repo..."
     cd "../$repo"
     git pull --rebase
@@ -85,7 +94,7 @@ for repo in "${REPOS[@]}"; do
         continue
     fi
 
-    REPO_GIT_SHA=$(git submodule $DEP_LOC | cut -c 2-41)
+    REPO_GIT_SHA=$(git submodule status $DEP_LOC | cut -c 2-41)
     if [ "$SS_GIT_SHA" == "$REPO_GIT_SHA" ]; then
         echo "$repo already has latest sdc-scripts.  Not updating."
         continue
@@ -95,8 +104,8 @@ for repo in "${REPOS[@]}"; do
     git submodule init $DEP_LOC
     git submodule update $DEP_LOC
     cd $DEP_LOC
-    git pull --rebase
-    git merge origin/master
+    git checkout master
+    git pull --rebase origin $(git rev-parse --abbrev-ref HEAD)
     cd -
     git add $DEP_LOC
     git commit -m "$JIRA: Updating to latest sdc-scripts ($SS_GIT_SHA_SHORT)"
@@ -110,6 +119,7 @@ if [ ${#PROBLEMS[*]} != 0 ]; then
     echo "There were problems updating the following repos:"
     echo "${PROBLEMS[@]}"
 else
+    echo
     echo "All repos up to date."
 fi
 
