@@ -70,7 +70,7 @@ function _sdc_install_bashrc()
 
 function _sdc_setup_amon_agent()
 {
-    if [[ ! -f /var/svc/setup_complete ]]; then
+    if [[ ! -f /var/svc/setup_complete && -d /opt/amon-agent ]]; then
         # Install and start the amon-agent.
         (cd /opt/amon-agent && ./pkg/postinstall.sh)
         rm -f /var/svc/amon-agent.tgz
@@ -80,9 +80,13 @@ function _sdc_setup_amon_agent()
 
 function setup_config_agent()
 {
-    echo "Setting up SAPI config-agent"
-    local sapi_url=$(mdata-get sapi-url)
     local prefix=/opt/smartdc/config-agent
+    if [[ ! -d $prefix ]]; then
+        return
+    fi
+
+    echo "Setting up config-agent"
+    local sapi_url=$(mdata-get sapi-url)
     local tmpfile=/tmp/agent.$$.xml
 
     sed -e "s#@@PREFIX@@#${prefix}#g" \
@@ -149,8 +153,16 @@ function upload_values()
 #
 
 # Download this zone's SAPI metadata and save it in a local file.
+# TODO: Drop support for this. Zones needs this should get it themselves.
 function download_metadata()
 {
+    local admin_mac
+    admin_mac=$(mdata-get sdc:nics | json -c 'this.nic_tag==="admin"' 0.mac)
+    if [[ -z "${admin_mac}" ]]; then
+        echo "Skipping download of SAPI metadata: don't have admin NIC"
+        return
+    fi
+
     export METADATA=/var/tmp/metadata.json
     echo "Downloading SAPI metadata to ${METADATA}"
     local sapi_url=$(mdata-get sapi-url)
@@ -164,8 +176,12 @@ function download_metadata()
 
 function write_initial_config()
 {
-    echo "Writing initial SAPI manifests."
     local prefix=/opt/smartdc/config-agent
+    if [[ ! -d $prefix ]]; then
+        return
+    fi
+
+    echo "Writing initial SAPI manifests."
     # Write configuration synchronously
     ${prefix}/build/node/bin/node ${prefix}/agent.js -s
 
@@ -173,57 +189,22 @@ function write_initial_config()
     svcadm enable config-agent
 }
 
-
-# "sapi_adopt" means adding an "instance" record to SAPI's DB for this
-# instance.
+# SAPI-255: This was dropped, however we keep a stub here to not break
+# the call to 'sapi_adopt' in the SAPI zone from headnode.sh in the
+# GZ in case we get a mix of old-headnode.sh + new-sapi-image.
+#
+# After some reasonable period, this stub could be dropped.
 function sapi_adopt()
 {
-    if [[ ${ZONE_ROLE} != "assets" && ${ZONE_ROLE} != "sapi" ]]; then
-        sapi_instance=$(curl -s $(mdata-get sapi-url)/instances/$(zonename) | \
-                        json -H uuid)
-    fi
-
-    if [[ -z ${sapi_instance} ]]; then
-        # adopt this instance
-        sapi_url=$(mdata-get sapi-url)
-
-        local service_uuid=""
-        local i=0
-        while [[ -z ${service_uuid} && ${i} -lt 48 ]]; do
-            service_uuid=$(curl ${sapi_url}/services?name=${ZONE_ROLE}\
-                -sS -H accept:application/json | json -Ha uuid)
-            if [[ -z ${service_uuid} ]]; then
-                echo "Unable to get server_uuid from sapi yet.  Sleeping..."
-                sleep 5
-            fi
-            i=$((${i} + 1))
-        done
-        [[ -n ${service_uuid} ]] || \
-            fatal "Unable to get service_uuid for role ${ZONE_ROLE} from SAPI"
-
-        uuid=$(zonename)
-        alias=$(mdata-get sdc:alias)
-
-        i=0
-        while [[ -z ${sapi_instance} && ${i} -lt 48 ]]; do
-            sapi_instance=$(curl ${sapi_url}/instances -sS -X POST \
-                -H content-type:application/json \
-                -d "{ \"service_uuid\" : \"${service_uuid}\", \"uuid\" : \"${uuid}\", \"params\": { \"alias\": \"${alias}\" } }" \
-                | json -H uuid)
-            if [[ -z ${sapi_instance} ]]; then
-                echo "Unable to adopt ${uuid} into sapi yet.  Sleeping..."
-                sleep 5
-            fi
-            i=$((${i} + 1))
-        done
-
-        [[ -n ${sapi_instance} ]] || fatal "Unable to adopt ${uuid} into SAPI"
-        echo "Adopted service ${alias} to instance ${uuid}"
-    fi
+    echo "Warning: 'sapi_adopt' is deprecated."
 }
 
 function registrar_setup()
 {
+    if [[ ! -d /opt/smartdc/registrar ]]; then
+        return
+    fi
+
     local manifest=/opt/smartdc/registrar/smf/manifests/registrar.xml
     local config=/opt/smartdc/registrar/etc/config.json
 
@@ -328,12 +309,6 @@ function sdc_common_setup()
     _sdc_log_rotation_setup
 
     if [[ ! -f /var/svc/setup_complete ]]; then
-        echo "Initializing SAPI metadata and config-agent"
-
-        if [[ ${ZONE_ROLE} != "assets" && ${ZONE_ROLE} != "sapi" ]]; then
-            sapi_adopt
-        fi
-
         if [[ ${ZONE_ROLE} != "assets" ]]; then
             if [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == "true" ]]; then
                 echo "Skipping config-agent/SAPI instance setup: 'sapi' zone in proto mode"
