@@ -33,9 +33,11 @@ REPOS=(
     sdc-cnapi
     sdc-docker
     sdc-fwapi
+    sdc-hostvolume
     sdc-imgapi
     sdc-manatee
     sdc-manta
+    sdc-nat
     sdc-napi
     sdc-papi
     sdc-portolan
