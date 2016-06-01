@@ -292,6 +292,24 @@ function sdc_log_rotation_setup_end {
     rm -f $crontab
 }
 
+# Sets up RBAC profiles for access to zone metadata, and imports the
+# pfexec SMF service.
+function _sdc_mdata_rbac_setup()
+{
+    svccfg import /lib/svc/manifest/system/pfexecd.xml
+    svcadm enable pfexec
+    cat > /etc/security/prof_attr.d/mdata <<EOF
+Metadata Reader:::Read access to zone metadata:help=Metadata.html
+Metadata Writer:::Write access to zone metadata:help=Metadata.html
+EOF
+    cat > /etc/security/exec_attr.d/mdata <<EOF
+Metadata Reader:solaris:cmd:::/usr/sbin/mdata-get:privs=file_dac_search
+Metadata Reader:solaris:cmd:::/usr/sbin/mdata-list:privs=file_dac_search
+Metadata Writer:solaris:cmd:::/usr/sbin/mdata-put:privs=file_dac_search
+Metadata Writer:solaris:cmd:::/usr/sbin/mdata-delete:privs=file_dac_search
+EOF
+}
+
 
 # Main entry point for an SDC core zone's "setup.sh". See top-comment.
 #
@@ -307,6 +325,7 @@ function sdc_common_setup()
     _sdc_install_bashrc
     _sdc_setup_amon_agent
     _sdc_log_rotation_setup
+    _sdc_mdata_rbac_setup
 
     if [[ ! -f /var/svc/setup_complete ]]; then
         if [[ ${ZONE_ROLE} != "assets" ]]; then
