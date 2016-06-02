@@ -302,12 +302,14 @@ function _sdc_mdata_rbac_setup()
 Metadata Reader:::Read access to zone metadata:help=Metadata.html
 Metadata Writer:::Write access to zone metadata:help=Metadata.html
 EOF
+    cat /etc/security/prof_attr.d/mdata >> /etc/security/prof_attr
     cat > /etc/security/exec_attr.d/mdata <<EOF
 Metadata Reader:solaris:cmd:::/usr/sbin/mdata-get:privs=file_dac_search
 Metadata Reader:solaris:cmd:::/usr/sbin/mdata-list:privs=file_dac_search
 Metadata Writer:solaris:cmd:::/usr/sbin/mdata-put:privs=file_dac_search
 Metadata Writer:solaris:cmd:::/usr/sbin/mdata-delete:privs=file_dac_search
 EOF
+    cat /etc/security/exec_attr.d/mdata >> /etc/security/exec_attr
 }
 
 
