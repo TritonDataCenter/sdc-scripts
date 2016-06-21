@@ -65,10 +65,13 @@ if [[ "$SDC_LOG_ROLL_FORWARD" == "1" ]]; then
     #       support for this code path in GZ.
     DATE=/opt/local/bin/date
     hourfwd=$($DATE -d \@$(( $($DATE -d $logtime "+%s") + 3600 )) "+%Y-%m-%dT%H:00:00")
-    cat $lastlog >>${base}_${zone}_${hourfwd}.log
+    targ="${base}_${zone}_${hourfwd}.log"
 else
     # Roll backward (to the top of this hour).
     base=$(echo $lastlog | cut -d: -f1)   # '/var/log/sdc/upload/$name...T23'
-    cat $lastlog >>${base}:00:00.log
+    targ="${base}:00:00.log"
 fi
-rm $lastlog
+if [[ "$lastlog" != "$targ" ]]; then
+    cat $lastlog >>${targ}
+    rm $lastlog
+fi
