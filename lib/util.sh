@@ -296,7 +296,12 @@ function sdc_log_rotation_setup_end {
 # pfexec SMF service.
 function _sdc_mdata_rbac_setup()
 {
-    svccfg import /lib/svc/manifest/system/pfexecd.xml
+    pfexecd_xml="/lib/svc/manifest/system/pfexecd.xml"
+    # On old platforms <~201506 and earlier, pfexecd.xml doesn't exist
+    if [ ! -e ${pfexecd_xml} ]; then
+        pfexecd_xml="/opt/smartdc/boot/smf/manifests/pfexecd.xml"
+    fi
+    svccfg import ${pfexecd_xml}
     svcadm enable pfexec
     cat > /etc/security/prof_attr.d/mdata <<EOF
 Metadata Reader:::Read access to zone metadata:help=Metadata.html
