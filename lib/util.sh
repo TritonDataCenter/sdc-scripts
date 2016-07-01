@@ -6,7 +6,7 @@
 #
 
 #
-# Copyright (c) 2014, Joyent, Inc.
+# Copyright 2016 Joyent, Inc.
 #
 
 #
@@ -38,11 +38,16 @@
 #set -o pipefail
 
 
-function fatal() {
-    echo "error: $*" >&2
+function fatal()
+{
+    printf '%s: ERROR: %s\n' "$(basename $0)" "$*" >&2
     exit 1
 }
 
+function warn()
+{
+    printf '%s: WARNING: %s\n' "$(basename $0)" "$*" >&2
+}
 
 function _sdc_load_variables()
 {
@@ -152,26 +157,72 @@ function upload_values()
 # SAPI endpoint.
 #
 
+#
 # Download this zone's SAPI metadata and save it in a local file.
-# TODO: Drop support for this. Zones needs this should get it themselves.
+#
 function download_metadata()
 {
     local admin_mac
-    admin_mac=$(mdata-get sdc:nics | json -c 'this.nic_tag==="admin"' 0.mac)
+    local url
+    local i
+
+    admin_mac=$(mdata-get sdc:nics | json -c 'this.nic_tag === "admin"' 0.mac)
     if [[ -z "${admin_mac}" ]]; then
-        echo "Skipping download of SAPI metadata: don't have admin NIC"
-        return
+        warn "Skipping download of SAPI metadata: don't have admin NIC"
+        return 0
     fi
 
     export METADATA=/var/tmp/metadata.json
-    echo "Downloading SAPI metadata to ${METADATA}"
-    local sapi_url=$(mdata-get sapi-url)
+    printf 'Downloading SAPI metadata to: %s\n' "${METADATA}" >&2
 
-    curl -s ${sapi_url}/configs/$(zonename) | json metadata > ${METADATA}
-    # TODO(HEAD-1983): This won't work: json pipe looses retval.
-    if [[ $? -ne 0 ]]; then
-        fatal "failed to download metadata from SAPI"
-    fi
+    url="$(mdata-get sapi-url)/configs/$(zonename)"
+    printf 'Using SAPI URL: %s\n' "$url" >&2
+
+    i=0
+    while (( i++ < 30 )); do
+        #
+        # Make sure the temporary files do not exist:
+        #
+        rm -f "$METADATA.raw"
+        rm -f "$METADATA.extracted"
+
+        #
+        # Download SAPI configuration for this instance:
+        #
+        if ! curl -sSf -o "$METADATA.raw" "$url"; then
+            warn "could not download SAPI metadata (retrying)"
+            sleep 2
+            continue
+        fi
+
+        #
+        # Extract the metadata object from the SAPI configuration:
+        #
+        if ! json -f "$METADATA.raw" metadata > "$METADATA.extracted"; then
+            warn "could not parse SAPI metadata (retrying)"
+            sleep 2
+            continue
+        fi
+
+        #
+        # Make sure we did not write an empty file:
+        #
+        if [[ ! -s "$METADATA.extracted" ]]; then
+            fatal "metadata file was empty"
+        fi
+
+        #
+        # Move the metadata file into place:
+        #
+        if ! mv "$METADATA.extracted" "$METADATA"; then
+            fatal "could not move metadata file into place"
+        fi
+
+        rm -f "$METADATA.raw"
+        return 0
+    done
+
+    fatal "failed to download SAPI configuration (too many retries)"
 }
 
 function write_initial_config()
