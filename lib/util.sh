@@ -549,7 +549,7 @@ function _sdc_rbac_install_shard()
 
     case "$dbname" in
     exec_attr|prof_attr)
-        dbdir="/etc/security/${dbname}_attr.d"
+        dbdir="/etc/security/$dbname.d"
         srcdir="/opt/smartdc/boot$dbdir"
         ;;
     *)
