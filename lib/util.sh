@@ -93,20 +93,38 @@ function _sdc_import_smf_manifest()
 
 function _sdc_enable_smf_service()
 {
+    local waitflag=${2:-}
+    local flags=
+
+    if [[ $waitflag == "wait" ]]; then
+        flags+=" -s "
+    elif [[ -n $waitflag ]]; then
+        fatal "_sdc_enable_smf_service: invalid waitflag: $waitflag"
+    fi
+
     printf 'Enabling smf(5) service "%s".\n' "$1" >&2
-    if ! /usr/sbin/svcadm enable -s "$1"; then
+    if ! /usr/sbin/svcadm enable $flags "$1"; then
         fatal "Could not enable smf(5) service \"$1\""
     fi
 }
 
 function _sdc_restart_smf_service()
 {
+    local waitflag=${2:-}
+    local flags=
+
+    if [[ $waitflag == "wait" ]]; then
+        flags+=" -s "
+    elif [[ -n $waitflag ]]; then
+        fatal "_sdc_restart_smf_service: invalid waitflag: $waitflag"
+    fi
+
     printf 'Disabling smf(5) service "%s" as part of restart.\n' "$1" >&2
-    if ! /usr/sbin/svcadm disable -s "$1"; then
+    if ! /usr/sbin/svcadm disable $flags "$1"; then
         fatal "Could not disable smf(5) service \"$1\" as part of restart"
     fi
     printf 'Enabling smf(5) service "%s" as part of restart.\n' "$1" >&2
-    if ! /usr/sbin/svcadm enable -s "$1"; then
+    if ! /usr/sbin/svcadm enable $flags "$1"; then
         fatal "Could not enable smf(5) service \"$1\" as part of restart"
     fi
 }
@@ -412,6 +430,12 @@ function registrar_setup()
         fatal "No registrar config for ${ZONE_ROLE}"
     fi
 
+    #
+    # NOTE: We do not block waiting for registrar to start as it depends on the
+    # transient "svc:/smartdc/mdata:execute" service.  This function is
+    # executed as part of the start method for that service, so if we block
+    # here we will essentially deadlock with ourselves.
+    #
     _sdc_import_smf_manifest "$manifest"
     _sdc_enable_smf_service 'svc:/manta/application/registrar:default'
 }
@@ -424,7 +448,7 @@ function registrar_setup()
 function _sdc_enable_cron()
 {
     _sdc_import_smf_manifest '/lib/svc/manifest/system/cron.xml'
-    _sdc_enable_smf_service 'svc:/system/cron:default'
+    _sdc_enable_smf_service 'svc:/system/cron:default' wait
 }
 
 function _sdc_log_rotation_setup()
@@ -572,7 +596,7 @@ function _sdc_rbac_install_shard()
     # When installing a new shard file, we restart it synchronously to ensure
     # the primary database file is up to date.
     #
-    _sdc_restart_smf_service 'svc:/system/rbac:default'
+    _sdc_restart_smf_service 'svc:/system/rbac:default' wait
 }
 
 #
@@ -601,8 +625,8 @@ function _sdc_mdata_rbac_setup()
 
     _sdc_import_smf_manifest "$pfexecd_xml"
     _sdc_import_smf_manifest "$rbac_xml"
-    _sdc_enable_smf_service 'svc:/system/pfexec:default'
-    _sdc_enable_smf_service 'svc:/system/rbac:default'
+    _sdc_enable_smf_service 'svc:/system/pfexec:default' wait
+    _sdc_enable_smf_service 'svc:/system/rbac:default' wait
 
     _sdc_rbac_install_shard 'prof_attr' 'mdata'
     _sdc_rbac_install_shard 'exec_attr' 'mdata'
