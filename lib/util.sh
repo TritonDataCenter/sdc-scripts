@@ -178,11 +178,11 @@ function _sdc_setup_amon_agent()
 
 function setup_config_agent()
 {
+    local local_manifest_dirs=${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS:-}
     local prefix=/opt/smartdc/config-agent
     local config_file=$prefix/etc/config.json
     local node=$prefix/build/node/bin/node
     local sapi_url
-    local config
 
     if [[ ! -d $prefix ]]; then
         return 0
@@ -223,11 +223,10 @@ function setup_config_agent()
     if ! "$node" -e '
         var mod_fs = require("fs");
 
-        var fromenv = process.env.CONFIG_AGENT_LOCAL_MANIFESTS_DIRS;
         var dirs = [];
 
-        if (fromenv) {
-            var t = fromenv.split(/[ \t]+/);
+        if (process.argv[3]) {
+            var t = process.argv[3].split(/[ \t]+/);
 
             for (var i = 0; i < t.length; i++) {
                 var dir = t[i].trim();
@@ -247,7 +246,7 @@ function setup_config_agent()
             localManifestDirs: dirs
         }));
 
-    ' "$config_file" "$sapi_url"; then
+    ' "$config_file" "$sapi_url" "$local_manifest_dirs"; then
         fatal 'Could not generate initial config-agent config JSON'
     fi
 }
