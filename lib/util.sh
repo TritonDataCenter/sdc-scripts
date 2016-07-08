@@ -69,7 +69,7 @@ function _sdc_mdata_get()
     if [[ -z $md_key ]]; then
         fatal '_sdc_mdata_get requires a metadata key'
     fi
-    printf 'Loading metadata for key "%s".\n' "$md_key"
+    printf 'Loading metadata for key "%s".\n' "$md_key" >&2
 
     if ! md_value=$(/usr/sbin/mdata-get "$md_key"); then
         fatal "Could not load \"$md_key\" from metadata agent"
@@ -85,7 +85,7 @@ function _sdc_mdata_get()
 
 function _sdc_import_smf_manifest()
 {
-    printf 'Importing smf(5) manifest "%s".\n' "$1"
+    printf 'Importing smf(5) manifest "%s".\n' "$1" >&2
     if ! /usr/sbin/svccfg import "$1"; then
         fatal "Could not import smf(5) manifest \"$1\""
     fi
@@ -93,7 +93,7 @@ function _sdc_import_smf_manifest()
 
 function _sdc_enable_smf_service()
 {
-    printf 'Enabling smf(5) service "%s".\n' "$1"
+    printf 'Enabling smf(5) service "%s".\n' "$1" >&2
     if ! /usr/sbin/svcadm enable -s "$1"; then
         fatal "Could not enable smf(5) service \"$1\""
     fi
@@ -101,11 +101,11 @@ function _sdc_enable_smf_service()
 
 function _sdc_restart_smf_service()
 {
-    printf 'Disabling smf(5) service "%s" as part of restart.\n' "$1"
+    printf 'Disabling smf(5) service "%s" as part of restart.\n' "$1" >&2
     if ! /usr/sbin/svcadm disable -s "$1"; then
         fatal "Could not disable smf(5) service \"$1\" as part of restart"
     fi
-    printf 'Enabling smf(5) service "%s" as part of restart.\n' "$1"
+    printf 'Enabling smf(5) service "%s" as part of restart.\n' "$1" >&2
     if ! /usr/sbin/svcadm enable -s "$1"; then
         fatal "Could not enable smf(5) service \"$1\" as part of restart"
     fi
@@ -178,7 +178,7 @@ function setup_config_agent()
     local target="$prefix/smf/manifests/config-agent.xml"
     local tmpfile="$prefix/.new.config-agent.xml"
 
-    printf 'Setting up config-agent.\n'
+    printf 'Setting up config-agent.\n' >&2
     sapi_url=$(_sdc_mdata_get sapi-url)
 
     #
@@ -371,7 +371,7 @@ function write_initial_config()
         return 0
     fi
 
-    printf 'Writing initial SAPI manifests.\n'
+    printf 'Writing initial SAPI manifests.\n' >&2
 
     #
     # Trigger config-agent to synchronously write an initial copy of any
@@ -627,7 +627,7 @@ function sdc_common_setup()
 {
     _sdc_load_variables
 
-    printf 'Performing setup of "%s" zone...\n' "${ZONE_ROLE}"
+    printf 'Performing setup of "%s" zone...\n' "${ZONE_ROLE}" >&2
 
     _sdc_create_dcinfo
     _sdc_install_bashrc
@@ -640,7 +640,7 @@ function sdc_common_setup()
             if [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == \
               "true" ]]; then
                 echo "Skipping config-agent/SAPI instance setup: 'sapi' " \
-                  "zone in proto mode"
+                  "zone in proto mode" >&2
             else
                 setup_config_agent
                 download_metadata
@@ -649,7 +649,7 @@ function sdc_common_setup()
             fi
         fi
     else
-        echo "Already setup, skipping SAPI and registrar initialization."
+        echo "Already setup, skipping SAPI and registrar initialization." >&2
     fi
 
     _sdc_enable_cron
@@ -662,7 +662,7 @@ function sdc_common_setup()
 function sdc_setup_complete()
 {
     touch /var/svc/setup_complete
-    echo "setup done"
+    echo "setup done" >&2
 
     # we copy the log in the background in 5 seconds so that we get the exit
     # in the log.
