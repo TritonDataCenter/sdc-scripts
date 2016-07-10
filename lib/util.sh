@@ -35,22 +35,22 @@
 #
 # NOTE: This script is a library sourced by various other Triton software
 # living in other consolidations.  The functions provided in this script must
-# operate safely when the shell options "errexit", or "pipefail", or both, or
-# neither, are active.
+# operate correctly under any combination of the shell options "errexit",
+# "pipefail", and "nounset".
 #
 
-function fatal()
+function fatal
 {
     printf '%s: ERROR: %s\n' "$(basename $0)" "$*" >&2
     exit 1
 }
 
-function warn()
+function warn
 {
     printf '%s: WARNING: %s\n' "$(basename $0)" "$*" >&2
 }
 
-function _sdc_lib_util_deprecated_function()
+function _sdc_lib_util_deprecated_function
 {
     warn "The function \"$1\" (in sdc-scripts) is deprecated."
 }
@@ -61,13 +61,13 @@ function _sdc_lib_util_deprecated_function()
 # All failures will exit the program with an appropriate message and a non-zero
 # status.
 #
-function _sdc_mdata_get()
+function _sdc_mdata_get
 {
     local md_key=${1:-}
     local md_value=
 
     if [[ -z $md_key ]]; then
-        fatal '_sdc_mdata_get requires a metadata key'
+        fatal "${FUNCNAME[0]} requires a metadata key"
     fi
     printf 'Loading metadata for key "%s".\n' "$md_key" >&2
 
@@ -83,18 +83,29 @@ function _sdc_mdata_get()
     return 0
 }
 
-function _sdc_import_smf_manifest()
+function _sdc_import_smf_manifest
 {
-    printf 'Importing smf(5) manifest "%s".\n' "$1" >&2
-    if ! /usr/sbin/svccfg import "$1"; then
-        fatal "Could not import smf(5) manifest \"$1\""
+    local fmri=${1:-}
+
+    if [[ -z $fmri ]]; then
+        fatal "${FUNCNAME[0]} requires an FMRI"
+    fi
+
+    printf 'Importing smf(5) manifest "%s".\n' "$fmri" >&2
+    if ! /usr/sbin/svccfg import "$fmri"; then
+        fatal "Could not import smf(5) manifest \"$fmri\""
     fi
 }
 
-function _sdc_enable_smf_service()
+function _sdc_enable_smf_service
 {
+    local fmri=${1:-}
     local waitflag=${2:-}
     local flags=
+
+    if [[ -z $fmri ]]; then
+        fatal "${FUNCNAME[0]} requires an FMRI"
+    fi
 
     if [[ $waitflag == "wait" ]]; then
         flags+=" -s "
@@ -108,33 +119,38 @@ function _sdc_enable_smf_service()
     fi
 }
 
-function _sdc_restart_smf_service()
+function _sdc_restart_smf_service
 {
+    local fmri=${1:-}
     local waitflag=${2:-}
     local flags=
+
+    if [[ -z $fmri ]]; then
+        fatal "${FUNCNAME[0]} requires an FMRI"
+    fi
 
     if [[ $waitflag == "wait" ]]; then
         flags+=" -s "
     elif [[ -n $waitflag ]]; then
-        fatal "_sdc_restart_smf_service: invalid waitflag: $waitflag"
+        fatal "${FUNCNAME[0]}: invalid waitflag: $waitflag"
     fi
 
-    printf 'Disabling smf(5) service "%s" as part of restart.\n' "$1" >&2
-    if ! /usr/sbin/svcadm disable $flags "$1"; then
-        fatal "Could not disable smf(5) service \"$1\" as part of restart"
+    printf 'Disabling smf(5) service "%s" as part of restart.\n' "$fmri" >&2
+    if ! /usr/sbin/svcadm disable $flags "$fmri"; then
+        fatal "Could not disable smf(5) service \"$fmri\" as part of restart"
     fi
-    printf 'Enabling smf(5) service "%s" as part of restart.\n' "$1" >&2
-    if ! /usr/sbin/svcadm enable $flags "$1"; then
-        fatal "Could not enable smf(5) service \"$1\" as part of restart"
+    printf 'Enabling smf(5) service "%s" as part of restart.\n' "$fmri" >&2
+    if ! /usr/sbin/svcadm enable $flags "$fmri"; then
+        fatal "Could not enable smf(5) service \"$fmri\" as part of restart"
     fi
 }
 
-function _sdc_load_variables()
+function _sdc_load_variables
 {
     export ZONE_ROLE=$(_sdc_mdata_get sdc:tags.smartdc_role)
 }
 
-function _sdc_create_dcinfo()
+function _sdc_create_dcinfo
 {
     local dc_name
 
@@ -147,7 +163,7 @@ function _sdc_create_dcinfo()
     printf 'SDC_DATACENTER_NAME="%s"\n' "$dc_name" > /.dcinfo
 }
 
-function _sdc_install_bashrc()
+function _sdc_install_bashrc
 {
     if [[ ! -f /opt/smartdc/boot/etc/root.bashrc ]]; then
         return 0
@@ -159,7 +175,7 @@ function _sdc_install_bashrc()
     fi
 }
 
-function _sdc_setup_amon_agent()
+function _sdc_setup_amon_agent
 {
     if [[ -f /var/svc/setup_complete ]]; then
         return 0
@@ -176,7 +192,7 @@ function _sdc_setup_amon_agent()
     /usr/bin/rm -f /var/svc/amon-agent.tgz
 }
 
-function setup_config_agent()
+function setup_config_agent
 {
     local local_manifest_dirs=${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS:-}
     local prefix=/opt/smartdc/config-agent
@@ -244,7 +260,7 @@ function setup_config_agent()
                 url: process.argv[2]
             },
             localManifestDirs: dirs
-        }));
+        }, null, 4));
 
     ' "$config_file" "$sapi_url" "$local_manifest_dirs"; then
         fatal 'Could not generate initial config-agent config JSON'
@@ -254,13 +270,13 @@ function setup_config_agent()
 # Add a directory in which to search for local config manifests
 function config_agent_add_manifest_dir
 {
+    local dir=${1:-}
     local prefix=/opt/smartdc/config-agent
     local config_file=$prefix/etc/config.json
     local node=$prefix/build/node/bin/node
-    local dir=${1:-}
 
     if [[ -z $dir ]]; then
-        fatal "config_agent_add_manifest_dir requires a directory name"
+        fatal "${FUNCNAME[0]} requires a directory name"
     fi
 
     if [[ ! -f $config_file ]]; then
@@ -277,7 +293,7 @@ function config_agent_add_manifest_dir
         }
         obj.localManifestDirs.push(process.argv[2]);
 
-        mod_fs.writeFileSync(process.argv[1], JSON.stringify(obj));
+        mod_fs.writeFileSync(process.argv[1], JSON.stringify(obj, null, 4));
 
     ' "$config_file" "$dir"; then
         fatal 'Could not add directory to config-agent configuration file'
@@ -289,7 +305,7 @@ function config_agent_add_manifest_dir
 # GZ in case we get a mix of old-headnode.sh + new-sapi-image.
 #
 # After some reasonable period, this stub could be dropped.
-function upload_values()
+function upload_values
 {
     _sdc_lib_util_deprecated_function upload_values
 }
@@ -308,7 +324,7 @@ function upload_values()
 #
 # Download this zone's SAPI metadata and save it in a local file.
 #
-function download_metadata()
+function download_metadata
 {
     local sdc_nics
     local admin_mac
@@ -379,7 +395,7 @@ function download_metadata()
     fatal "failed to download SAPI configuration (too many retries)"
 }
 
-function write_initial_config()
+function write_initial_config
 {
     local prefix=/opt/smartdc/config-agent
     local node=$prefix/build/node/bin/node
@@ -407,12 +423,12 @@ function write_initial_config()
 # GZ in case we get a mix of old-headnode.sh + new-sapi-image.
 #
 # After some reasonable period, this stub could be dropped.
-function sapi_adopt()
+function sapi_adopt
 {
     _sdc_lib_util_deprecated_function sapi_adopt
 }
 
-function registrar_setup()
+function registrar_setup
 {
     if [[ ! -d /opt/smartdc/registrar ]]; then
         return 0
@@ -444,13 +460,13 @@ function registrar_setup()
 # cron smf(5) service is not enabled by default.  We want to enable it so that
 # logadm(1M) is invoked periodically for log rotation.
 #
-function _sdc_enable_cron()
+function _sdc_enable_cron
 {
     _sdc_import_smf_manifest '/lib/svc/manifest/system/cron.xml'
     _sdc_enable_smf_service 'svc:/system/cron:default' wait
 }
 
-function _sdc_log_rotation_setup()
+function _sdc_log_rotation_setup
 {
     local dir
 
@@ -498,7 +514,7 @@ function _sdc_log_rotation_setup()
 #   sdc_log_rotation_add amon-agent /var/svc/log/*amon-agent*.log 1g
 #   sdc_log_rotation_add imgapi /var/svc/log/*imgapi*.log 1g
 #
-function sdc_log_rotation_add()
+function sdc_log_rotation_add
 {
     local name=${1:-}
     local pattern=${2:-}
@@ -506,26 +522,26 @@ function sdc_log_rotation_add()
     local extra_opts=
 
     if [[ -z $name ]]; then
-        fatal "sdc_log_rotation_add requires at least 1 argument"
+        fatal "${FUNCNAME[0]} requires at least 1 argument"
     fi
 
     if /usr/bin/grep '[_ ]' <<< "$name" >/dev/null; then
-        fatal "sdc_log_rotation_add: 'name' cannot include spaces or " \
+        fatal "${FUNCNAME[0]}: 'name' cannot include spaces or " \
           "underscores: '$name'"
     fi
 
-    if [[ -n "$size" ]]; then
-        extra_opts="$extra_opts -S $size"
+    if [[ -n $size ]]; then
+        extra_opts+=" -S $size "
     fi
 
     if ! /usr/sbin/logadm -w "$name" $extra_opts -C 168 -c -p 1h \
-      -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:%M:%S.log" \
-      -a "/opt/smartdc/boot/sbin/postlogrotate.sh ${name}" "$pattern"; then
+      -t "/var/log/sdc/upload/$name_\$nodename_%FT%H:%M:%S.log" \
+      -a "/opt/smartdc/boot/sbin/postlogrotate.sh $name" "$pattern"; then
         fatal "could not add logadm(1M) rule for service log \"$name\""
     fi
 }
 
-function sdc_log_rotation_setup_end()
+function sdc_log_rotation_setup_end
 {
     local crontab
 
@@ -563,12 +579,16 @@ function sdc_log_rotation_setup_end()
     fi
 }
 
-function _sdc_rbac_install_shard()
+function _sdc_rbac_install_shard
 {
-    local dbname=$1
-    local shard=$2
+    local dbname=${1:-}
+    local shard=${2:-}
     local dbdir
     local srcdir
+
+    if [[ -z $dbname || -z $shard ]]; then
+        fatal "${FUNCNAME[0]} requires a database name and a shard name"
+    fi
 
     case "$dbname" in
     exec_attr|prof_attr)
@@ -602,7 +622,7 @@ function _sdc_rbac_install_shard()
 # Sets up RBAC profiles for access to zone metadata, and imports the pfexec SMF
 # service.
 #
-function _sdc_mdata_rbac_setup()
+function _sdc_mdata_rbac_setup
 {
     local pfexecd_xml='/lib/svc/manifest/system/pfexecd.xml'
     local rbac_xml='/lib/svc/manifest/system/rbac.xml'
@@ -631,6 +651,7 @@ function _sdc_mdata_rbac_setup()
     _sdc_rbac_install_shard 'exec_attr' 'mdata'
 }
 
+#
 # Main entry point for the "setup.sh" script shipped in a Triton core zone
 # image.  A full usage example appears in the block comment at the top of
 # this file.
@@ -646,7 +667,7 @@ function _sdc_mdata_rbac_setup()
 #
 #     Set to "true" if SAPI is in proto mode.
 #
-function sdc_common_setup()
+function sdc_common_setup
 {
     _sdc_load_variables
 
@@ -682,7 +703,7 @@ function sdc_common_setup()
 # Create the setup_complete file and prepare to copy the log. This should be
 # called as the last thing before setup exits.
 #
-function sdc_setup_complete()
+function sdc_setup_complete
 {
     touch /var/svc/setup_complete
     echo "setup done" >&2
