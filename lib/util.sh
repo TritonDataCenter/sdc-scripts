@@ -267,7 +267,9 @@ function setup_config_agent
     fi
 }
 
+#
 # Add a directory in which to search for local config manifests
+#
 function config_agent_add_manifest_dir
 {
     local dir=${1:-}
@@ -300,11 +302,13 @@ function config_agent_add_manifest_dir
     fi
 }
 
+#
 # SAPI-224: This was dropped, however we keep a stub here to not break
 # the call to 'upload_values' in the SAPI zone from headnode.sh in the
 # GZ in case we get a mix of old-headnode.sh + new-sapi-image.
 #
 # After some reasonable period, this stub could be dropped.
+#
 function upload_values
 {
     _sdc_lib_util_deprecated_function upload_values
@@ -418,11 +422,13 @@ function write_initial_config
     _sdc_enable_smf_service 'svc:/smartdc/application/config-agent:default'
 }
 
+#
 # SAPI-255: This was dropped, however we keep a stub here to not break
 # the call to 'sapi_adopt' in the SAPI zone from headnode.sh in the
 # GZ in case we get a mix of old-headnode.sh + new-sapi-image.
 #
 # After some reasonable period, this stub could be dropped.
+#
 function sapi_adopt
 {
     _sdc_lib_util_deprecated_function sapi_adopt
@@ -566,7 +572,7 @@ function sdc_log_rotation_setup_end
       -e '/\/usr\/sbin\/logadm$/d' <<< "$crontab"); then
         fatal "Could not remove logadm(1M) entries from crontab"
     fi
-    if grep logadm <<< "$crontab" >/dev/null; then
+    if /usr/bin/grep logadm <<< "$crontab" >/dev/null; then
         fatal "Not all 'logadm' references removed from crontab"
     fi
 
