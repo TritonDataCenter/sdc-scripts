@@ -580,7 +580,7 @@ function sdc_log_rotation_setup_end
     # Add new hourly logadm(1M) entry to the crontab and install it:
     #
     crontab=$(printf '%s\n\n%s\n' "$crontab" "0 * * * * /usr/sbin/logadm")
-    if ! crontab <<< "$crontab"; then
+    if ! /usr/bin/crontab <<< "$crontab"; then
         fatal "Could not install root crontab"
     fi
 }
@@ -671,7 +671,16 @@ function _sdc_mdata_rbac_setup
 #
 #   SAPI_PROTO_MODE
 #
-#     Set to "true" if SAPI is in proto mode.
+#     This variable can be set to "true" in the context of an instance
+#     of the "sapi" service when SAPI is to operate in the "proto"
+#     mode; i.e.  without being fully initialised and available for
+#     use.
+#
+#     If set to "true", no attempt will be made to configure
+#     "config-agent" or "registrar" in a "sapi" zone -- these steps
+#     depend on SAPI, which, by construction, is not currently
+#     available.  If unset, or set to any other value, or this is not
+#     a "sapi" zone, there will be no effect.
 #
 function sdc_common_setup
 {
