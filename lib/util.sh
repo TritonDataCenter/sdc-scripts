@@ -6,12 +6,11 @@
 #
 
 #
-# Copyright (c) 2014, Joyent, Inc.
+# Copyright 2016 Joyent, Inc.
 #
 
 #
-# Usage in a SDC core zone "boot/setup.sh" file:
-#
+# Usage in a Triton core zone "boot/setup.sh" file:
 #
 #   role=myapi
 #   ...
@@ -33,112 +32,279 @@
 #   sdc_setup_complete
 #
 
-# TODO(HEAD-1983): finish validating using these with all SDC core zones.
-#set -o errexit
-#set -o pipefail
+#
+# NOTE: This script is a library sourced by various other Triton software
+# living in other consolidations.  The functions provided in this script must
+# operate correctly under any combination of the shell options "errexit",
+# "pipefail", and "nounset".
+#
 
-
-function fatal() {
-    echo "error: $*" >&2
+function fatal
+{
+    printf '%s: ERROR: %s\n' "$(basename $0)" "$*" >&2
     exit 1
 }
 
-
-function _sdc_load_variables()
+function warn
 {
-    export ZONE_ROLE=$(mdata-get sdc:tags.smartdc_role)
-    [[ -n "${ZONE_ROLE}" ]] || fatal "Unable to find zone role in metadata."
+    printf '%s: WARNING: %s\n' "$(basename $0)" "$*" >&2
 }
 
-function _sdc_create_dcinfo()
+function _sdc_lib_util_deprecated_function
 {
-    # Setup "/.dcinfo": info about the datacenter in which this zone runs
-    # (used for a more helpful PS1 prompt).
-    local dc_name=$(mdata-get sdc:datacenter_name)
-    if [[ $? == 0 && -z ${dc_name} ]]; then
-        dc_name="UNKNOWN"
+    warn "The function \"$1\" (in sdc-scripts) is deprecated."
+}
+
+#
+# Fetch a value from the metadata agent.  This function checks to make sure the
+# fetch was successful, and that the value returned is not the empty string.
+# All failures will exit the program with an appropriate message and a non-zero
+# status.
+#
+# NOTE: If running this function to capture the output, bash will run
+# the function in a subshell so the "fatal" invocations will NOT cause
+# the exit of the process.  The caller MUST check the return code; e.g.
+#
+#   if ! value=$(_sdc_mdata_get sdc:nics); then
+#       fatal 'failed to get NIC data'
+#   fi
+#
+function _sdc_mdata_get
+{
+    local md_key=${1:-}
+    local md_value=
+
+    if [[ -z $md_key ]]; then
+        fatal "${FUNCNAME[0]} requires a metadata key"
     fi
-    [[ -n ${dc_name} ]] && echo "SDC_DATACENTER_NAME=\"${dc_name}\"" > /.dcinfo
+    printf 'Loading metadata for key "%s".\n' "$md_key" >&2
+
+    if ! md_value=$(/usr/sbin/mdata-get "$md_key"); then
+        fatal "could not load \"$md_key\" from metadata agent"
+    fi
+
+    if [[ -z $md_value ]]; then
+        fatal "empty metadata value for key \"$md_key\""
+    fi
+
+    printf '%s' "$md_value"
+    return 0
 }
 
-function _sdc_install_bashrc()
+#
+# Run curl(1) with options that attempt to prevent it swallowing errors, or
+# hanging forever in the event of pathological server or network behaviour.
+# Note that "--max-time" is a hard cap on the entire request duration, so it
+# should not be made too short.
+#
+function _sdc_curl
 {
-    if [[ -f /opt/smartdc/boot/etc/root.bashrc ]]; then
-        cp /opt/smartdc/boot/etc/root.bashrc /root/.bashrc
+    curl -sSf --connect-timeout 45 --max-time 120 "$@"
+}
+
+function _sdc_import_smf_manifest
+{
+    local fmri=${1:-}
+
+    if [[ -z $fmri ]]; then
+        fatal "${FUNCNAME[0]} requires an FMRI"
+    fi
+
+    printf 'Importing smf(5) manifest "%s".\n' "$fmri" >&2
+    if ! /usr/sbin/svccfg import "$fmri"; then
+        fatal "could not import smf(5) manifest \"$fmri\""
     fi
 }
 
-function _sdc_setup_amon_agent()
+function _sdc_enable_smf_service
 {
-    if [[ ! -f /var/svc/setup_complete && -d /opt/amon-agent ]]; then
-        # Install and start the amon-agent.
-        (cd /opt/amon-agent && ./pkg/postinstall.sh)
-        rm -f /var/svc/amon-agent.tgz
+    local fmri=${1:-}
+    local waitflag=${2:-}
+    local flags=()
+
+    if [[ -z $fmri ]]; then
+        fatal "${FUNCNAME[0]} requires an FMRI"
+    fi
+
+    if [[ $waitflag == "wait" ]]; then
+        flags+=( '-s' )
+    elif [[ -n $waitflag ]]; then
+        fatal "_sdc_enable_smf_service: invalid waitflag: $waitflag"
+    fi
+
+    printf 'Enabling smf(5) service "%s".\n' "$1" >&2
+    if ! /usr/sbin/svcadm enable "${flags[@]}" "$1"; then
+        fatal "could not enable smf(5) service \"$1\""
     fi
 }
 
-
-function setup_config_agent()
+function _sdc_restart_smf_service
 {
+    local fmri=${1:-}
+    local waitflag=${2:-}
+    local flags=()
+
+    if [[ -z $fmri ]]; then
+        fatal "${FUNCNAME[0]} requires an FMRI"
+    fi
+
+    if [[ $waitflag == "wait" ]]; then
+        flags+=( '-s' )
+    elif [[ -n $waitflag ]]; then
+        fatal "${FUNCNAME[0]}: invalid waitflag: $waitflag"
+    fi
+
+    printf 'Disabling smf(5) service "%s" as part of restart.\n' "$fmri" >&2
+    if ! /usr/sbin/svcadm disable "${flags[@]}" "$fmri"; then
+        fatal "could not disable smf(5) service \"$fmri\" as part of restart"
+    fi
+    printf 'Enabling smf(5) service "%s" as part of restart.\n' "$fmri" >&2
+    if ! /usr/sbin/svcadm enable "${flags[@]}" "$fmri"; then
+        fatal "could not enable smf(5) service \"$fmri\" as part of restart"
+    fi
+}
+
+function _sdc_load_variables
+{
+    if ! ZONE_ROLE=$(_sdc_mdata_get sdc:tags.smartdc_role); then
+        fatal 'could not get zone role'
+    fi
+
+    export ZONE_ROLE
+}
+
+function _sdc_create_dcinfo
+{
+    local dc_name
+
+    if ! dc_name=$(_sdc_mdata_get sdc:datacenter_name); then
+        fatal 'could not get data center name'
+    fi
+
+    #
+    # Setup "/.dcinfo": info about the datacenter in which this zone runs (used
+    # for a more helpful PS1 prompt).
+    #
+    if ! printf 'SDC_DATACENTER_NAME="%s"\n' "$dc_name" > /.dcinfo; then
+        fatal "could not create /.dcinfo file"
+    fi
+}
+
+function _sdc_install_bashrc
+{
+    if [[ ! -f /opt/smartdc/boot/etc/root.bashrc ]]; then
+        return 0
+    fi
+
+    /usr/bin/rm -f /root/.bashrc
+    if ! /usr/bin/cp /opt/smartdc/boot/etc/root.bashrc /root/.bashrc; then
+        fatal 'could not install "/root/.bashrc"'
+    fi
+}
+
+function _sdc_setup_amon_agent
+{
+    if [[ -f /var/svc/setup_complete ]]; then
+        return 0
+    fi
+
+    if [[ ! -d /opt/amon-agent ]]; then
+        return 0
+    fi
+
+    if ! (cd /opt/amon-agent && ./pkg/postinstall.sh); then
+        fatal 'could not install amon-agent'
+    fi
+
+    /usr/bin/rm -f /var/svc/amon-agent.tgz
+}
+
+function setup_config_agent
+{
+    local dirlist=${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS:-}
     local prefix=/opt/smartdc/config-agent
+    local config_file=$prefix/etc/config.json
+    local node=$prefix/build/node/bin/node
+    local script=/opt/smartdc/boot/lib/setup_config_agent.js
+    local sapi_url
+
     if [[ ! -d $prefix ]]; then
-        return
+        return 0
     fi
 
-    echo "Setting up config-agent"
-    local sapi_url=$(mdata-get sapi-url)
-    local tmpfile=/tmp/agent.$$.xml
+    #
+    # Note that the temporary file is not in "/tmp", but rather within the
+    # target prefix directory.  This makes it more likely that the resultant
+    # mv(1) operation will be an atomic rename(2).
+    #
+    local target="$prefix/smf/manifests/config-agent.xml"
+    local tmpfile="$prefix/.new.config-agent.xml"
 
-    sed -e "s#@@PREFIX@@#${prefix}#g" \
-        ${prefix}/smf/manifests/config-agent.xml > ${tmpfile}
-    mv ${tmpfile} ${prefix}/smf/manifests/config-agent.xml
+    printf 'Setting up config-agent.\n' >&2
+    if ! sapi_url=$(_sdc_mdata_get sapi-url); then
+        fatal 'could not get SAPI URL'
+    fi
 
-    mkdir -p ${prefix}/etc
-    local file=${prefix}/etc/config.json
-    cat >${file} <<EOF
-{
-    "logLevel": "info",
-    "pollInterval": 60000,
-    "sapi": {
-        "url": "${sapi_url}"
-    }
-}
-EOF
+    #
+    # Ensure that the @@PREFIX@@ token in the smf(5) manifest is correctly
+    # replaced with the location at which config-agent is installed.
+    #
+    /usr/bin/rm -f "$tmpfile"
+    if ! /usr/bin/sed -e "s#@@PREFIX@@#$prefix#g" "$target" > "$tmpfile"; then
+        fatal "could not perform substitutions on \"$target\""
+    fi
+    if ! /usr/bin/mv "$tmpfile" "$target"; then
+        fatal "could not move edited file \"$tmpfile\" into place"
+    fi
 
-    # Caller of setup.common can set 'CONFIG_AGENT_LOCAL_MANIFESTS_DIRS'
-    # to have config-agent use local manifests.
-    if [[ -n "${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS}" ]]; then
-        for dir in ${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS}; do
-            local tmpfile=/tmp/add_dir.$$.json
-            cat ${file} | json -e "
-                this.localManifestDirs = this.localManifestDirs || [];
-                this.localManifestDirs.push('$dir');
-                " >${tmpfile}
-            mv ${tmpfile} ${file}
-        done
+    #
+    # Callers can pass a list of directories that config-agent should search
+    # for SAPI manifests shipped within the image itself.  We must construct a
+    # configuration file that includes these directories, as well as a variety
+    # of default settings.
+    #
+    if ! /usr/bin/mkdir -p "$prefix/etc"; then
+        fatal 'could not create config-agent config dir'
+    fi
+    if ! "$node" "$script" 'init' "$config_file" "$sapi_url" "$dirlist"; then
+        fatal 'could not generate initial config-agent config JSON'
     fi
 }
 
+#
 # Add a directory in which to search for local config manifests
+#
 function config_agent_add_manifest_dir
 {
-    local file=/opt/smartdc/config-agent/etc/config.json
-    local dir=$1
+    local dir=${1:-}
+    local prefix=/opt/smartdc/config-agent
+    local config_file=$prefix/etc/config.json
+    local node=$prefix/build/node/bin/node
+    local script=/opt/smartdc/boot/lib/setup_config_agent.js
 
-    local tmpfile=/tmp/add_dir.$$.json
+    if [[ -z $dir ]]; then
+        fatal "${FUNCNAME[0]} requires a directory name"
+    fi
 
-    cat ${file} | json -e "this.localManifestDirs.push('$dir')" >${tmpfile}
-    mv ${tmpfile} ${file}
+    if [[ ! -f $config_file ]]; then
+        fatal 'config-agent configuration file does not yet exist'
+    fi
+
+    if ! "$node" "$script" 'add_manifest_dir' "$config_file" "$dir"; then
+        fatal 'could not add directory to config-agent configuration file'
+    fi
 }
 
+#
 # SAPI-224: This was dropped, however we keep a stub here to not break
 # the call to 'upload_values' in the SAPI zone from headnode.sh in the
 # GZ in case we get a mix of old-headnode.sh + new-sapi-image.
 #
 # After some reasonable period, this stub could be dropped.
-function upload_values()
+#
+function upload_values
 {
-    echo "Warning: 'upload_values' is deprecated."
+    _sdc_lib_util_deprecated_function upload_values
 }
 
 #
@@ -152,182 +318,376 @@ function upload_values()
 # SAPI endpoint.
 #
 
+#
 # Download this zone's SAPI metadata and save it in a local file.
-# TODO: Drop support for this. Zones needs this should get it themselves.
-function download_metadata()
+#
+function download_metadata
 {
+    local sdc_nics
     local admin_mac
-    admin_mac=$(mdata-get sdc:nics | json -c 'this.nic_tag==="admin"' 0.mac)
-    if [[ -z "${admin_mac}" ]]; then
-        echo "Skipping download of SAPI metadata: don't have admin NIC"
-        return
+    local url
+    local i
+
+    if ! sdc_nics=$(_sdc_mdata_get sdc:nics); then
+        fatal 'could not get NIC information'
+    fi
+
+    if ! admin_mac=$(json -c 'this.nic_tag === "admin"' 0.mac \
+      <<< "$sdc_nics"); then
+        fatal 'could not parse sdc:nics as JSON'
+    fi
+    if [[ -z $admin_mac ]]; then
+        warn "skipping download of SAPI metadata: don't have admin NIC"
+        return 0
     fi
 
     export METADATA=/var/tmp/metadata.json
-    echo "Downloading SAPI metadata to ${METADATA}"
-    local sapi_url=$(mdata-get sapi-url)
+    printf 'Downloading SAPI metadata to: %s\n' "${METADATA}" >&2
 
-    curl -s ${sapi_url}/configs/$(zonename) | json metadata > ${METADATA}
-    # TODO(HEAD-1983): This won't work: json pipe looses retval.
-    if [[ $? -ne 0 ]]; then
-        fatal "failed to download metadata from SAPI"
+    if ! url="$(_sdc_mdata_get sapi-url)/configs/$(zonename)"; then
+        fatal 'could not get SAPI URL or zone name'
     fi
+    printf 'Using SAPI URL: %s\n' "$url" >&2
+
+    i=0
+    while (( i++ < 30 )); do
+        #
+        # Make sure the temporary files do not exist:
+        #
+        /usr/bin/rm -f "$METADATA.raw"
+        /usr/bin/rm -f "$METADATA.extracted"
+
+        #
+        # Download SAPI configuration for this instance:
+        #
+        if ! _sdc_curl -o "$METADATA.raw" "$url"; then
+            warn "could not download SAPI metadata (retrying)"
+            sleep 2
+            continue
+        fi
+
+        #
+        # Extract the metadata object from the SAPI configuration:
+        #
+        if ! json -f "$METADATA.raw" metadata > "$METADATA.extracted"; then
+            warn "could not parse SAPI metadata (retrying)"
+            sleep 2
+            continue
+        fi
+
+        #
+        # Make sure we did not write an empty file:
+        #
+        if [[ ! -s "$METADATA.extracted" ]]; then
+            fatal "metadata file was empty"
+        fi
+
+        #
+        # Move the metadata file into place:
+        #
+        if ! /usr/bin/mv "$METADATA.extracted" "$METADATA"; then
+            fatal "could not move metadata file into place"
+        fi
+
+        /usr/bin/rm -f "$METADATA.raw"
+        return 0
+    done
+
+    fatal "failed to download SAPI configuration (too many retries)"
 }
 
-function write_initial_config()
+function write_initial_config
 {
     local prefix=/opt/smartdc/config-agent
+    local node=$prefix/build/node/bin/node
+
     if [[ ! -d $prefix ]]; then
-        return
+        return 0
     fi
 
-    echo "Writing initial SAPI manifests."
-    # Write configuration synchronously
-    ${prefix}/build/node/bin/node ${prefix}/agent.js -s
+    printf 'Writing initial SAPI manifests.\n' >&2
 
-    svccfg import ${prefix}/smf/manifests/config-agent.xml
-    svcadm enable config-agent
+    #
+    # Trigger config-agent to synchronously write an initial copy of any
+    # service configuration files.
+    #
+    if ! "$node" "$prefix/agent.js" -s; then
+        fatal 'synchronous config-agent run failed'
+    fi
+
+    _sdc_import_smf_manifest "$prefix/smf/manifests/config-agent.xml"
+    _sdc_enable_smf_service 'svc:/smartdc/application/config-agent:default'
 }
 
+#
 # SAPI-255: This was dropped, however we keep a stub here to not break
 # the call to 'sapi_adopt' in the SAPI zone from headnode.sh in the
 # GZ in case we get a mix of old-headnode.sh + new-sapi-image.
 #
 # After some reasonable period, this stub could be dropped.
-function sapi_adopt()
+#
+function sapi_adopt
 {
-    echo "Warning: 'sapi_adopt' is deprecated."
+    _sdc_lib_util_deprecated_function sapi_adopt
 }
 
-function registrar_setup()
+function registrar_setup
 {
     if [[ ! -d /opt/smartdc/registrar ]]; then
-        return
+        return 0
     fi
 
     local manifest=/opt/smartdc/registrar/smf/manifests/registrar.xml
     local config=/opt/smartdc/registrar/etc/config.json
 
-    if [[ -f ${manifest} ]]; then
-        [[ -f ${config} ]] || fatal "No registrar config for ${ZONE_ROLE}"
+    if [[ ! -f $manifest ]]; then
+        return 0
+    fi
 
-        echo "Importing and enabling registrar"
-        svccfg import ${manifest} || fatal "failed to import registrar"
-        svcadm enable registrar || fatal "failed to enable registrar"
+    if [[ ! -f $config ]]; then
+        fatal "no registrar config for ${ZONE_ROLE}"
+    fi
+
+    #
+    # NOTE: We do not block waiting for registrar to start as it depends on the
+    # transient "svc:/smartdc/mdata:execute" service.  This function is
+    # executed as part of the start method for that service, so if we block
+    # here we will essentially deadlock with ourselves.
+    #
+    _sdc_import_smf_manifest "$manifest"
+    _sdc_enable_smf_service 'svc:/manta/application/registrar:default'
+}
+
+#
+# Triton service zones are based on the "joyent-minimal" brand, in which the
+# cron smf(5) service is not enabled by default.  We want to enable it so that
+# logadm(1M) is invoked periodically for log rotation.
+#
+function _sdc_enable_cron
+{
+    _sdc_import_smf_manifest '/lib/svc/manifest/system/cron.xml'
+    _sdc_enable_smf_service 'svc:/system/cron:default' wait
+}
+
+function _sdc_log_rotation_setup
+{
+    local dir
+
+    #
+    # Create Triton service log upload directories and set appropriate
+    # permissions.
+    #
+    for dir in /var/log/sdc /var/log/sdc/upload; do
+        if ! /usr/bin/mkdir -p "$dir"; then
+            fatal "could not create log directory \"$dir\""
+        fi
+
+        if ! /usr/bin/chown root:sys "$dir"; then
+            fatal "could not set permissions on log directory \"$dir\""
+        fi
+    done
+
+    #
+    # Ensure that logadm sends a SIGHUP to "rsyslogd" when rotating log files.
+    #
+    if ! /usr/sbin/logadm -r /var/adm/messages; then
+        fatal "could not clear logadm(1M) rules for /var/adm/messages"
+    fi
+    if ! /usr/sbin/logadm -w /var/adm/messages -C 4 -a \
+      'kill -HUP `cat /var/run/rsyslogd.pid`'; then
+        fatal "could not add logadm(1M) rule for /var/adm/messages"
     fi
 }
 
-function _sdc_enable_cron()
-{
-    # HEAD-1367 - Enable Cron. Since all zones using this are joyent-minimal,cron
-    # is not enable by default. We want to enable it though, for log rotation.
-    echo "Starting Cron"
-    svccfg import /lib/svc/manifest/system/cron.xml
-    svcadm enable cron
-}
-
-
-function _sdc_log_rotation_setup {
-    mkdir -p /var/log/sdc/upload
-    chown root:sys /var/log/sdc
-    chown root:sys /var/log/sdc/upload
-
-    # Ensure that log rotation HUPs *r*syslog.
-    logadm -r /var/adm/messages
-    logadm -w /var/adm/messages -C 4 -a 'kill -HUP `cat /var/run/rsyslogd.pid`'
-}
-
-# Add an entry to /etc/logadm.conf for hourly log rotation of important sdc
+#
+# Add an entry to /etc/logadm.conf for hourly log rotation of important Triton
 # logs.
 #
 # Usage:
-#   sdc_logadm_add <name> <file-pattern> [<size-limit>]
+#   sdc_log_rotation_add <name> <file-pattern> [<size-limit>]
 #
 # "<name>" is a short string (spaces and '_' are NOT allowed) name for
 # this log set. "<file-pattern>" is the path to the file (or a file pattern)
 # to rotate. If a pattern it should resolve to a single file -- i.e. allowing
 # a pattern is just for convenience. "<size-limit>" is an optional upper size
 # limit on all the rotated logs. It corresponds to the '-S size' argument in
-# logadm(1m).
+# logadm(1M).
 #
 # Examples:
 #   sdc_log_rotation_add amon-agent /var/svc/log/*amon-agent*.log 1g
 #   sdc_log_rotation_add imgapi /var/svc/log/*imgapi*.log 1g
 #
-function sdc_log_rotation_add {
-    [[ $# -ge 1 ]] || fatal "sdc_log_rotation_add requires at least 1 argument"
-    local name=$1
-    [[ -n "$(echo "$name" | (egrep '(_| )' || true))" ]] \
-        && fatal "sdc_log_rotation_add 'name' cannot include spaces or underscores: '$name'"
-    local pattern="$2"
-    local size=$3
-    local extra_opts=
-    if [[ -n "$size" ]]; then
-        extra_opts="$extra_opts -S $size"
+function sdc_log_rotation_add
+{
+    local name=${1:-}
+    local pattern=${2:-}
+    local size=${3:-}
+    local flags=()
+    local unsafe_regex='[_ ]'
+
+    if [[ -z $name ]]; then
+        fatal "${FUNCNAME[0]} requires at least 1 argument"
     fi
-    logadm -w $name $extra_opts -C 168 -c -p 1h \
-        -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:%M:%S.log" \
-        -a "/opt/smartdc/boot/sbin/postlogrotate.sh ${name}" \
-        "$pattern" || fatal "unable to create $name logadm entry"
+
+    if [[ $name =~ $unsafe_regex ]]; then
+        fatal "${FUNCNAME[0]}: 'name' cannot include spaces or " \
+          "underscores: '$name'"
+    fi
+
+    if [[ -n $size ]]; then
+        flags+=( '-S' )
+        flags+=( $size )
+    fi
+
+    if ! /usr/sbin/logadm -w "$name" "${flags[@]}" -C 168 -c -p 1h \
+      -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:%M:%S.log" \
+      -a "/opt/smartdc/boot/sbin/postlogrotate.sh $name" "$pattern"; then
+        fatal "could not add logadm(1M) rule for service log \"$name\""
+    fi
 }
 
-# TODO(HEAD-1365): Once ready for all sdc zones, move this to sdc_setup_complete
-function sdc_log_rotation_setup_end {
+function sdc_log_rotation_setup_end
+{
+    local crontab
+    local logadm_regex='logadm'
+
+    #
     # Move the smf_logs entry to run last (after the entries we just added) so
     # that the default '-C 3' doesn't defeat our attempts to save out.
-    logadm -r smf_logs
-    logadm -w smf_logs -C 3 -c -s 1m '/var/svc/log/*.log'
+    #
+    if ! /usr/sbin/logadm -r smf_logs; then
+        fatal "could not clear logadm(1M) rules for smf(5) log files"
+    fi
+    if ! /usr/sbin/logadm -w smf_logs -C 3 -c -s 1m '/var/svc/log/*.log'; then
+        fatal "could not add logadm(1M) rule for smf(5) log files"
+    fi
 
-    crontab=/tmp/.sdc_log_rotation_end-$$.cron
-    # Remove the existing default daily logadm.
-    crontab -l | sed '/# Rotate system logs/d; /\/usr\/sbin\/logadm$/d' >$crontab
-    [[ $? -eq 0 ]] || fatal "Unable to write to $crontab"
-    grep logadm $crontab >/dev/null \
-        && fatal "Not all 'logadm' references removed from crontab"
-    echo '' >>$crontab
-    # Add an hourly logadm.
-    echo '0 * * * * /usr/sbin/logadm' >>$crontab
-    crontab $crontab
-    [[ $? -eq 0 ]] || fatal "Unable import crontab"
-    rm -f $crontab
+    #
+    # Scrub existing logadm(1M) invocations from the root crontab:
+    #
+    if ! crontab=$(/usr/bin/crontab -l); then
+        fatal "could not read root crontab"
+    fi
+    if ! crontab=$(/usr/bin/sed -e '/# Rotate system logs/d' \
+      -e '/\/usr\/sbin\/logadm$/d' <<< "$crontab"); then
+        fatal "could not remove logadm(1M) entries from crontab"
+    fi
+    if [[ $crontab =~ $logadm_regex ]]; then
+        fatal "not all 'logadm' references removed from crontab"
+    fi
+
+    #
+    # Add new hourly logadm(1M) entry to the crontab and install it:
+    #
+    crontab=$(printf '%s\n\n%s\n' "$crontab" "0 * * * * /usr/sbin/logadm")
+    if ! /usr/bin/crontab <<< "$crontab"; then
+        fatal "could not install root crontab"
+    fi
 }
 
-# Sets up RBAC profiles for access to zone metadata, and imports the
-# pfexec SMF service.
-function _sdc_mdata_rbac_setup()
+function _sdc_rbac_install_shard
 {
-    pfexecd_xml="/lib/svc/manifest/system/pfexecd.xml"
-    # On old platforms <~201506 and earlier, pfexecd.xml doesn't exist
-    if [ ! -e ${pfexecd_xml} ]; then
+    local dbname=${1:-}
+    local shard=${2:-}
+    local dbdir
+    local srcdir
+
+    if [[ -z $dbname || -z $shard ]]; then
+        fatal "${FUNCNAME[0]} requires a database name and a shard name"
+    fi
+
+    case "$dbname" in
+    exec_attr|prof_attr)
+        dbdir="/etc/security/$dbname.d"
+        srcdir="/opt/smartdc/boot$dbdir"
+        ;;
+    *)
+        fatal "unknown rbac(5) database name: $dbname"
+        ;;
+    esac
+
+    if ! /usr/bin/mkdir -p "$dbdir"; then
+        fatal "could not create rbac(5) database shard directory \"$dbdir\""
+    fi
+
+    /usr/bin/rm -f "$dbdir/$shard"
+    if ! /usr/bin/cp "$srcdir/$shard" "$dbdir/$shard"; then
+        fatal "could not install rbac(5) shard \"$shard\" from \"$srcdir\""
+    fi
+
+    #
+    # The "svc:/system/rbac:default" service is a transient service that merges
+    # any updated shard files into the primary file for each rbac(5) database.
+    # When installing a new shard file, we restart it synchronously to ensure
+    # the primary database file is up to date.
+    #
+    _sdc_restart_smf_service 'svc:/system/rbac:default' wait
+}
+
+#
+# Sets up RBAC profiles for access to zone metadata, and imports the pfexec SMF
+# service.
+#
+function _sdc_mdata_rbac_setup
+{
+    local pfexecd_xml='/lib/svc/manifest/system/pfexecd.xml'
+    local rbac_xml='/lib/svc/manifest/system/rbac.xml'
+
+    #
+    # On old platforms (i.e. before ~201506), some smf(5) manifests were not
+    # available to zones using the "joyent-minimal" brand.  In order to support
+    # those older platforms we ship a copy of the manifests we need, to be
+    # imported if they are not made available by the platform image.
+    #
+    if [[ ! -e $pfexecd_xml ]]; then
+        warn "platform does not expose pfexecd.xml; backfilling..."
         pfexecd_xml="/opt/smartdc/boot/smf/manifests/pfexecd.xml"
     fi
-    svccfg import ${pfexecd_xml}
-    svcadm enable pfexec
-    cat > /etc/security/prof_attr.d/mdata <<EOF
-Metadata Reader:::Read access to zone metadata:help=Metadata.html
-Metadata Writer:::Write access to zone metadata:help=Metadata.html
-EOF
-    cat /etc/security/prof_attr.d/mdata >> /etc/security/prof_attr
-    cat > /etc/security/exec_attr.d/mdata <<EOF
-Metadata Reader:solaris:cmd:::/usr/sbin/mdata-get:privs=file_dac_search
-Metadata Reader:solaris:cmd:::/usr/sbin/mdata-list:privs=file_dac_search
-Metadata Writer:solaris:cmd:::/usr/sbin/mdata-put:privs=file_dac_search
-Metadata Writer:solaris:cmd:::/usr/sbin/mdata-delete:privs=file_dac_search
-EOF
-    cat /etc/security/exec_attr.d/mdata >> /etc/security/exec_attr
+    if [[ ! -e $rbac_xml ]]; then
+        warn "platform does not expose rbac.xml; backfilling..."
+        rbac_xml="/opt/smartdc/boot/smf/manifests/rbac.xml"
+    fi
+
+    _sdc_import_smf_manifest "$pfexecd_xml"
+    _sdc_import_smf_manifest "$rbac_xml"
+    _sdc_enable_smf_service 'svc:/system/pfexec:default' wait
+    _sdc_enable_smf_service 'svc:/system/rbac:default' wait
+
+    _sdc_rbac_install_shard 'prof_attr' 'mdata'
+    _sdc_rbac_install_shard 'exec_attr' 'mdata'
 }
 
-
-# Main entry point for an SDC core zone's "setup.sh". See top-comment.
 #
-# Optional input envvars:
-#   CONFIG_AGENT_LOCAL_MANIFESTS_DIRS=<space-separated-list-of-local-manifest-dirs>
-#   SAPI_PROTO_MODE=<true>
+# Main entry point for the "setup.sh" script shipped in a Triton core zone
+# image.  A full usage example appears in the block comment at the top of
+# this file.
 #
-function sdc_common_setup()
+# Optional input environment variables:
+#
+#   CONFIG_AGENT_LOCAL_MANIFESTS_DIRS
+#
+#     A space-separated list of fully-qualified directory paths where
+#     config-agent should search for SAPI configuration manifests.
+#
+#   SAPI_PROTO_MODE
+#
+#     This variable can be set to "true" in the context of an instance
+#     of the "sapi" service when SAPI is to operate in the "proto"
+#     mode; i.e.  without being fully initialised and available for
+#     use.
+#
+#     If set to "true", no attempt will be made to configure
+#     "config-agent" or "registrar" in a "sapi" zone -- these steps
+#     depend on SAPI, which, by construction, is not currently
+#     available.  If unset, or set to any other value, or this is not
+#     a "sapi" zone, there will be no effect.
+#
+function sdc_common_setup
 {
     _sdc_load_variables
-    echo "Performing setup of ${ZONE_ROLE} zone"
+
+    printf 'Performing setup of "%s" zone...\n' "${ZONE_ROLE}" >&2
+
     _sdc_create_dcinfo
     _sdc_install_bashrc
     _sdc_setup_amon_agent
@@ -336,8 +696,10 @@ function sdc_common_setup()
 
     if [[ ! -f /var/svc/setup_complete ]]; then
         if [[ ${ZONE_ROLE} != "assets" ]]; then
-            if [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == "true" ]]; then
-                echo "Skipping config-agent/SAPI instance setup: 'sapi' zone in proto mode"
+            if [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == \
+              "true" ]]; then
+                echo "Skipping config-agent/SAPI instance setup: 'sapi' " \
+                  "zone in proto mode" >&2
             else
                 setup_config_agent
                 download_metadata
@@ -346,7 +708,7 @@ function sdc_common_setup()
             fi
         fi
     else
-        echo "Already setup, skipping SAPI and registrar initialization."
+        echo "Already setup, skipping SAPI and registrar initialization." >&2
     fi
 
     _sdc_enable_cron
@@ -356,10 +718,10 @@ function sdc_common_setup()
 # Create the setup_complete file and prepare to copy the log. This should be
 # called as the last thing before setup exits.
 #
-function sdc_setup_complete()
+function sdc_setup_complete
 {
     touch /var/svc/setup_complete
-    echo "setup done"
+    echo "setup done" >&2
 
     # we copy the log in the background in 5 seconds so that we get the exit
     # in the log.
