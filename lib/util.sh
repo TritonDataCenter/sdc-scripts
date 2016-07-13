@@ -61,6 +61,14 @@ function _sdc_lib_util_deprecated_function
 # All failures will exit the program with an appropriate message and a non-zero
 # status.
 #
+# NOTE: If running this function to capture the output, bash will run
+# the function in a subshell so the "fatal" invocations will NOT cause
+# the exit of the process.  The caller MUST check the return code; e.g.
+#
+#   if ! value=$(_sdc_mdata_get sdc:nics); then
+#       fatal 'failed to get NIC data'
+#   fi
+#
 function _sdc_mdata_get
 {
     local md_key=${1:-}
@@ -72,15 +80,26 @@ function _sdc_mdata_get
     printf 'Loading metadata for key "%s".\n' "$md_key" >&2
 
     if ! md_value=$(/usr/sbin/mdata-get "$md_key"); then
-        fatal "Could not load \"$md_key\" from metadata agent"
+        fatal "could not load \"$md_key\" from metadata agent"
     fi
 
     if [[ -z $md_value ]]; then
-        fatal "Empty metadata value for key \"$md_key\""
+        fatal "empty metadata value for key \"$md_key\""
     fi
 
     printf '%s' "$md_value"
     return 0
+}
+
+#
+# Run curl(1) with options that attempt to prevent it swallowing errors, or
+# hanging forever in the event of pathological server or network behaviour.
+# Note that "--max-time" is a hard cap on the entire request duration, so it
+# should not be made too short.
+#
+function _sdc_curl
+{
+    curl -sSf --connect-timeout 45 --max-time 120 "$@"
 }
 
 function _sdc_import_smf_manifest
@@ -93,7 +112,7 @@ function _sdc_import_smf_manifest
 
     printf 'Importing smf(5) manifest "%s".\n' "$fmri" >&2
     if ! /usr/sbin/svccfg import "$fmri"; then
-        fatal "Could not import smf(5) manifest \"$fmri\""
+        fatal "could not import smf(5) manifest \"$fmri\""
     fi
 }
 
@@ -101,21 +120,21 @@ function _sdc_enable_smf_service
 {
     local fmri=${1:-}
     local waitflag=${2:-}
-    local flags=
+    local flags=()
 
     if [[ -z $fmri ]]; then
         fatal "${FUNCNAME[0]} requires an FMRI"
     fi
 
     if [[ $waitflag == "wait" ]]; then
-        flags+=" -s "
+        flags+=( '-s' )
     elif [[ -n $waitflag ]]; then
         fatal "_sdc_enable_smf_service: invalid waitflag: $waitflag"
     fi
 
     printf 'Enabling smf(5) service "%s".\n' "$1" >&2
-    if ! /usr/sbin/svcadm enable $flags "$1"; then
-        fatal "Could not enable smf(5) service \"$1\""
+    if ! /usr/sbin/svcadm enable "${flags[@]}" "$1"; then
+        fatal "could not enable smf(5) service \"$1\""
     fi
 }
 
@@ -123,44 +142,52 @@ function _sdc_restart_smf_service
 {
     local fmri=${1:-}
     local waitflag=${2:-}
-    local flags=
+    local flags=()
 
     if [[ -z $fmri ]]; then
         fatal "${FUNCNAME[0]} requires an FMRI"
     fi
 
     if [[ $waitflag == "wait" ]]; then
-        flags+=" -s "
+        flags+=( '-s' )
     elif [[ -n $waitflag ]]; then
         fatal "${FUNCNAME[0]}: invalid waitflag: $waitflag"
     fi
 
     printf 'Disabling smf(5) service "%s" as part of restart.\n' "$fmri" >&2
-    if ! /usr/sbin/svcadm disable $flags "$fmri"; then
-        fatal "Could not disable smf(5) service \"$fmri\" as part of restart"
+    if ! /usr/sbin/svcadm disable "${flags[@]}" "$fmri"; then
+        fatal "could not disable smf(5) service \"$fmri\" as part of restart"
     fi
     printf 'Enabling smf(5) service "%s" as part of restart.\n' "$fmri" >&2
-    if ! /usr/sbin/svcadm enable $flags "$fmri"; then
-        fatal "Could not enable smf(5) service \"$fmri\" as part of restart"
+    if ! /usr/sbin/svcadm enable "${flags[@]}" "$fmri"; then
+        fatal "could not enable smf(5) service \"$fmri\" as part of restart"
     fi
 }
 
 function _sdc_load_variables
 {
-    export ZONE_ROLE=$(_sdc_mdata_get sdc:tags.smartdc_role)
+    if ! ZONE_ROLE=$(_sdc_mdata_get sdc:tags.smartdc_role); then
+        fatal 'could not get zone role'
+    fi
+
+    export ZONE_ROLE
 }
 
 function _sdc_create_dcinfo
 {
     local dc_name
 
-    dc_name=$(_sdc_mdata_get sdc:datacenter_name)
+    if ! dc_name=$(_sdc_mdata_get sdc:datacenter_name); then
+        fatal 'could not get data center name'
+    fi
 
     #
     # Setup "/.dcinfo": info about the datacenter in which this zone runs (used
     # for a more helpful PS1 prompt).
     #
-    printf 'SDC_DATACENTER_NAME="%s"\n' "$dc_name" > /.dcinfo
+    if ! printf 'SDC_DATACENTER_NAME="%s"\n' "$dc_name" > /.dcinfo; then
+        fatal "could not create /.dcinfo file"
+    fi
 }
 
 function _sdc_install_bashrc
@@ -171,7 +198,7 @@ function _sdc_install_bashrc
 
     /usr/bin/rm -f /root/.bashrc
     if ! /usr/bin/cp /opt/smartdc/boot/etc/root.bashrc /root/.bashrc; then
-        fatal 'Could not install "/root/.bashrc"'
+        fatal 'could not install "/root/.bashrc"'
     fi
 }
 
@@ -186,7 +213,7 @@ function _sdc_setup_amon_agent
     fi
 
     if ! (cd /opt/amon-agent && ./pkg/postinstall.sh); then
-        fatal 'Could not install amon-agent'
+        fatal 'could not install amon-agent'
     fi
 
     /usr/bin/rm -f /var/svc/amon-agent.tgz
@@ -194,10 +221,11 @@ function _sdc_setup_amon_agent
 
 function setup_config_agent
 {
-    local local_manifest_dirs=${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS:-}
+    local dirlist=${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS:-}
     local prefix=/opt/smartdc/config-agent
     local config_file=$prefix/etc/config.json
     local node=$prefix/build/node/bin/node
+    local script=/opt/smartdc/boot/lib/setup_config_agent.js
     local sapi_url
 
     if [[ ! -d $prefix ]]; then
@@ -213,7 +241,9 @@ function setup_config_agent
     local tmpfile="$prefix/.new.config-agent.xml"
 
     printf 'Setting up config-agent.\n' >&2
-    sapi_url=$(_sdc_mdata_get sapi-url)
+    if ! sapi_url=$(_sdc_mdata_get sapi-url); then
+        fatal 'could not get SAPI URL'
+    fi
 
     #
     # Ensure that the @@PREFIX@@ token in the smf(5) manifest is correctly
@@ -221,10 +251,10 @@ function setup_config_agent
     #
     /usr/bin/rm -f "$tmpfile"
     if ! /usr/bin/sed -e "s#@@PREFIX@@#$prefix#g" "$target" > "$tmpfile"; then
-        fatal "Could not perform substitutions on \"$target\""
+        fatal "could not perform substitutions on \"$target\""
     fi
     if ! /usr/bin/mv "$tmpfile" "$target"; then
-        fatal "Could not move edited file \"$tmpfile\" into place"
+        fatal "could not move edited file \"$tmpfile\" into place"
     fi
 
     #
@@ -234,36 +264,10 @@ function setup_config_agent
     # of default settings.
     #
     if ! /usr/bin/mkdir -p "$prefix/etc"; then
-        fatal 'Could not create config-agent config dir'
+        fatal 'could not create config-agent config dir'
     fi
-    if ! "$node" -e '
-        var mod_fs = require("fs");
-
-        var dirs = [];
-
-        if (process.argv[3]) {
-            var t = process.argv[3].split(/[ \t]+/);
-
-            for (var i = 0; i < t.length; i++) {
-                var dir = t[i].trim();
-
-                if (dir && dirs.indexOf(dir) === -1) {
-                    dirs.push(dir);
-                }
-            }
-        }
-
-        mod_fs.writeFileSync(process.argv[1], JSON.stringify({
-            logLevel: "info",
-            pollInterval: 60 * 1000,
-            sapi: {
-                url: process.argv[2]
-            },
-            localManifestDirs: dirs
-        }, null, 4));
-
-    ' "$config_file" "$sapi_url" "$local_manifest_dirs"; then
-        fatal 'Could not generate initial config-agent config JSON'
+    if ! "$node" "$script" 'init' "$config_file" "$sapi_url" "$dirlist"; then
+        fatal 'could not generate initial config-agent config JSON'
     fi
 }
 
@@ -276,6 +280,7 @@ function config_agent_add_manifest_dir
     local prefix=/opt/smartdc/config-agent
     local config_file=$prefix/etc/config.json
     local node=$prefix/build/node/bin/node
+    local script=/opt/smartdc/boot/lib/setup_config_agent.js
 
     if [[ -z $dir ]]; then
         fatal "${FUNCNAME[0]} requires a directory name"
@@ -285,20 +290,8 @@ function config_agent_add_manifest_dir
         fatal 'config-agent configuration file does not yet exist'
     fi
 
-    if ! "$node" -e '
-        var mod_fs = require("fs");
-
-        var obj = JSON.parse(mod_fs.readFileSync(process.argv[1]));
-
-        if (!obj.localManifestDirs) {
-            obj.localManifestDirs = [];
-        }
-        obj.localManifestDirs.push(process.argv[2]);
-
-        mod_fs.writeFileSync(process.argv[1], JSON.stringify(obj, null, 4));
-
-    ' "$config_file" "$dir"; then
-        fatal 'Could not add directory to config-agent configuration file'
+    if ! "$node" "$script" 'add_manifest_dir' "$config_file" "$dir"; then
+        fatal 'could not add directory to config-agent configuration file'
     fi
 }
 
@@ -335,21 +328,25 @@ function download_metadata
     local url
     local i
 
-    sdc_nics=$(_sdc_mdata_get sdc:nics)
+    if ! sdc_nics=$(_sdc_mdata_get sdc:nics); then
+        fatal 'could not get NIC information'
+    fi
 
     if ! admin_mac=$(json -c 'this.nic_tag === "admin"' 0.mac \
       <<< "$sdc_nics"); then
-        fatal 'Could not parse sdc:nics as JSON'
+        fatal 'could not parse sdc:nics as JSON'
     fi
     if [[ -z $admin_mac ]]; then
-        warn "Skipping download of SAPI metadata: don't have admin NIC"
+        warn "skipping download of SAPI metadata: don't have admin NIC"
         return 0
     fi
 
     export METADATA=/var/tmp/metadata.json
     printf 'Downloading SAPI metadata to: %s\n' "${METADATA}" >&2
 
-    url="$(_sdc_mdata_get sapi-url)/configs/$(zonename)"
+    if ! url="$(_sdc_mdata_get sapi-url)/configs/$(zonename)"; then
+        fatal 'could not get SAPI URL or zone name'
+    fi
     printf 'Using SAPI URL: %s\n' "$url" >&2
 
     i=0
@@ -363,7 +360,7 @@ function download_metadata
         #
         # Download SAPI configuration for this instance:
         #
-        if ! curl -sSf -o "$METADATA.raw" "$url"; then
+        if ! _sdc_curl -o "$METADATA.raw" "$url"; then
             warn "could not download SAPI metadata (retrying)"
             sleep 2
             continue
@@ -448,7 +445,7 @@ function registrar_setup
     fi
 
     if [[ ! -f $config ]]; then
-        fatal "No registrar config for ${ZONE_ROLE}"
+        fatal "no registrar config for ${ZONE_ROLE}"
     fi
 
     #
@@ -482,11 +479,11 @@ function _sdc_log_rotation_setup
     #
     for dir in /var/log/sdc /var/log/sdc/upload; do
         if ! /usr/bin/mkdir -p "$dir"; then
-            fatal "Could not create log directory \"$dir\""
+            fatal "could not create log directory \"$dir\""
         fi
 
         if ! /usr/bin/chown root:sys "$dir"; then
-            fatal "Could not set permissions on log directory \"$dir\""
+            fatal "could not set permissions on log directory \"$dir\""
         fi
     done
 
@@ -494,11 +491,11 @@ function _sdc_log_rotation_setup
     # Ensure that logadm sends a SIGHUP to "rsyslogd" when rotating log files.
     #
     if ! /usr/sbin/logadm -r /var/adm/messages; then
-        fatal "Could not clear logadm(1M) rules for /var/adm/messages"
+        fatal "could not clear logadm(1M) rules for /var/adm/messages"
     fi
     if ! /usr/sbin/logadm -w /var/adm/messages -C 4 -a \
       'kill -HUP `cat /var/run/rsyslogd.pid`'; then
-        fatal "Could not add logadm(1M) rule for /var/adm/messages"
+        fatal "could not add logadm(1M) rule for /var/adm/messages"
     fi
 }
 
@@ -525,23 +522,25 @@ function sdc_log_rotation_add
     local name=${1:-}
     local pattern=${2:-}
     local size=${3:-}
-    local extra_opts=
+    local flags=()
+    local unsafe_regex='[_ ]'
 
     if [[ -z $name ]]; then
         fatal "${FUNCNAME[0]} requires at least 1 argument"
     fi
 
-    if /usr/bin/grep '[_ ]' <<< "$name" >/dev/null; then
+    if [[ $name =~ $unsafe_regex ]]; then
         fatal "${FUNCNAME[0]}: 'name' cannot include spaces or " \
           "underscores: '$name'"
     fi
 
     if [[ -n $size ]]; then
-        extra_opts+=" -S $size "
+        flags+=( '-S' )
+        flags+=( $size )
     fi
 
-    if ! /usr/sbin/logadm -w "$name" $extra_opts -C 168 -c -p 1h \
-      -t "/var/log/sdc/upload/$name_\$nodename_%FT%H:%M:%S.log" \
+    if ! /usr/sbin/logadm -w "$name" "${flags[@]}" -C 168 -c -p 1h \
+      -t "/var/log/sdc/upload/${name}_\$nodename_%FT%H:%M:%S.log" \
       -a "/opt/smartdc/boot/sbin/postlogrotate.sh $name" "$pattern"; then
         fatal "could not add logadm(1M) rule for service log \"$name\""
     fi
@@ -550,30 +549,31 @@ function sdc_log_rotation_add
 function sdc_log_rotation_setup_end
 {
     local crontab
+    local logadm_regex='logadm'
 
     #
     # Move the smf_logs entry to run last (after the entries we just added) so
     # that the default '-C 3' doesn't defeat our attempts to save out.
     #
     if ! /usr/sbin/logadm -r smf_logs; then
-        fatal "Could not clear logadm(1M) rules for smf(5) log files"
+        fatal "could not clear logadm(1M) rules for smf(5) log files"
     fi
     if ! /usr/sbin/logadm -w smf_logs -C 3 -c -s 1m '/var/svc/log/*.log'; then
-        fatal "Could not add logadm(1M) rule for smf(5) log files"
+        fatal "could not add logadm(1M) rule for smf(5) log files"
     fi
 
     #
     # Scrub existing logadm(1M) invocations from the root crontab:
     #
     if ! crontab=$(/usr/bin/crontab -l); then
-        fatal "Could not read root crontab"
+        fatal "could not read root crontab"
     fi
     if ! crontab=$(/usr/bin/sed -e '/# Rotate system logs/d' \
       -e '/\/usr\/sbin\/logadm$/d' <<< "$crontab"); then
-        fatal "Could not remove logadm(1M) entries from crontab"
+        fatal "could not remove logadm(1M) entries from crontab"
     fi
-    if /usr/bin/grep logadm <<< "$crontab" >/dev/null; then
-        fatal "Not all 'logadm' references removed from crontab"
+    if [[ $crontab =~ $logadm_regex ]]; then
+        fatal "not all 'logadm' references removed from crontab"
     fi
 
     #
@@ -581,7 +581,7 @@ function sdc_log_rotation_setup_end
     #
     crontab=$(printf '%s\n\n%s\n' "$crontab" "0 * * * * /usr/sbin/logadm")
     if ! /usr/bin/crontab <<< "$crontab"; then
-        fatal "Could not install root crontab"
+        fatal "could not install root crontab"
     fi
 }
 
@@ -602,17 +602,17 @@ function _sdc_rbac_install_shard
         srcdir="/opt/smartdc/boot$dbdir"
         ;;
     *)
-        fatal "Unknown rbac(5) database name: $dbname"
+        fatal "unknown rbac(5) database name: $dbname"
         ;;
     esac
 
     if ! /usr/bin/mkdir -p "$dbdir"; then
-        fatal "Could not create rbac(5) database shard directory \"$dbdir\""
+        fatal "could not create rbac(5) database shard directory \"$dbdir\""
     fi
 
     /usr/bin/rm -f "$dbdir/$shard"
     if ! /usr/bin/cp "$srcdir/$shard" "$dbdir/$shard"; then
-        fatal "Could not install rbac(5) shard \"$shard\" from \"$srcdir\""
+        fatal "could not install rbac(5) shard \"$shard\" from \"$srcdir\""
     fi
 
     #
