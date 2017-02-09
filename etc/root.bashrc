@@ -1,5 +1,5 @@
 if [ "$PS1" ]; then
-  shopt -s checkwinsize cdspell extglob histappend
+  shopt -s checkwinsize extglob histappend
   alias ll='ls -lF'
   HISTCONTROL=ignoreboth
   HISTIGNORE="[bf]g:exit:quit"
