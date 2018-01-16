@@ -694,21 +694,18 @@ function sdc_common_setup
     _sdc_log_rotation_setup
     _sdc_mdata_rbac_setup
 
-    if [[ ! -f /var/svc/setup_complete ]]; then
-        if [[ ${ZONE_ROLE} != "assets" ]]; then
-            if [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == \
-              "true" ]]; then
-                echo "Skipping config-agent/SAPI instance setup: 'sapi' " \
-                  "zone in proto mode" >&2
-            else
-                setup_config_agent
-                download_metadata
-                write_initial_config
-                registrar_setup
-            fi
-        fi
+    if [[ -f /var/svc/setup_complete ]]; then
+        echo "Skip config-agent/registrar setup: zone already setup" >&2
+    elif [[ ${ZONE_ROLE} == "assets" ]]; then
+        echo "Skip config-agent/registrar setup: assets zone" >&2
+    elif [[ ${ZONE_ROLE} == "sapi" && "${SAPI_PROTO_MODE}" == "true" ]]; then
+        echo "Skip config-agent/registrar setup: sapi zone in proto mode" >&2
     else
-        echo "Already setup, skipping SAPI and registrar initialization." >&2
+        echo "Setup config-agent/registrar" >&2
+        setup_config_agent
+        download_metadata
+        write_initial_config
+        registrar_setup
     fi
 
     _sdc_enable_cron
