@@ -604,7 +604,7 @@ function sdc_log_rotation_setup_end
     #
     # Add new hourly logadm(1M) entry to the crontab and install it:
     #
-    crontab=$(printf '%s\n\n%s\n' "$crontab"
+    crontab=$(printf '%s\n\n%s\n' "$crontab" \
         '0 * * * * /usr/sbin/logadm -v >> /var/log/logadm.log 2>&1')
     if ! /usr/bin/crontab <<< "$crontab"; then
         fatal "could not install root crontab"
