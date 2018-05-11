@@ -563,6 +563,31 @@ function sdc_log_rotation_setup_end
     fi
 
     #
+    # Origin images after smartos@1.6.3 added these logadm.conf entries:
+    #       /var/log/*.log -C 2 -c -s 5m
+    #       /var/log/*.debug -C 2 -c -s 5m
+    #
+    # Move the "*.log" entry to the end to not conflict with possible
+    # Triton rotation of "/var/log/*.log". However we *do* want to keep it
+    # as a useful catch-all for build-up of other log files there.
+    #
+    # Drop the "*.debug" entry. It is a crufty entry from old vmadm logs.
+    #
+    if egrep '^/var/log/\*\.log' /etc/logadm.conf >/dev/null; then
+        if ! /usr/sbin/logadm -r '/var/log/*.log'; then
+            fatal 'could not clear logadm(1M) rule for "/var/log/*.log" files'
+        fi
+    fi
+    if ! /usr/sbin/logadm -w '/var/svc/log/*.log' -C 2 -c -s 5m;  then
+        fatal 'could not add logadm(1M) rule for "/var/log/*.log" files'
+    fi
+    if egrep '^/var/log/\*\.debug' /etc/logadm.conf >/dev/null; then
+        if ! /usr/sbin/logadm -r '/var/log/*.debug'; then
+            fatal 'could not clear logadm(1M) rule for "/var/log/*.debug" files'
+        fi
+    fi
+
+    #
     # Scrub existing logadm(1M) invocations from the root crontab:
     #
     if ! crontab=$(/usr/bin/crontab -l); then
@@ -579,7 +604,8 @@ function sdc_log_rotation_setup_end
     #
     # Add new hourly logadm(1M) entry to the crontab and install it:
     #
-    crontab=$(printf '%s\n\n%s\n' "$crontab" "0 * * * * /usr/sbin/logadm")
+    crontab=$(printf '%s\n\n%s\n' "$crontab"
+        '0 * * * * /usr/sbin/logadm -v >> /var/log/logadm.log 2>&1')
     if ! /usr/bin/crontab <<< "$crontab"; then
         fatal "could not install root crontab"
     fi
