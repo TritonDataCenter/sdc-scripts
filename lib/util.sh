@@ -588,13 +588,23 @@ function sdc_log_rotation_setup_end
     fi
 
     #
-    # Scrub existing logadm(1M) invocations from the root crontab:
+    # Scrub existing logadm(1M) invocations from the root crontab. Explictly
+    # we want to ensure we scrub:
+    #
+    # 1. entries in our base images, which are various of the form:
+    #       10 0 * * * /usr/sbin/logadm
+    #       0 * * * * /usr/sbin/logadm
+    #       # Rotate system logs
+    #       10 3 * * * /usr/sbin/logadm
+    # 2. the entry we are adding below (to support this function being
+    #    re-runnable)
+    #       0 * * * * /usr/sbin/logadm -v >> /var/log/logadm.log 2>&1
     #
     if ! crontab=$(/usr/bin/crontab -l); then
         fatal "could not read root crontab"
     fi
     if ! crontab=$(/usr/bin/sed -e '/# Rotate system logs/d' \
-      -e '/\/usr\/sbin\/logadm$/d' <<< "$crontab"); then
+      -e '/ \/usr\/sbin\/logadm/d' <<< "$crontab"); then
         fatal "could not remove logadm(1M) entries from crontab"
     fi
     if [[ $crontab =~ $logadm_regex ]]; then
