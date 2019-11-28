@@ -219,6 +219,36 @@ function _sdc_setup_amon_agent
     /usr/bin/rm -f /var/svc/amon-agent.tgz
 }
 
+function get_admin_nic {
+    local sdc_nics
+    local admin_nic
+
+    if ! sdc_nics=$(_sdc_mdata_get sdc:nics); then
+        fatal 'could not get NIC information'
+    fi
+
+    if ! admin_nic=$(json -ac \
+            'this.nic_tag.match(/^admin(_rack_[A-Z0-9_-]+)?$/i) !== null' \
+            <<< "$sdc_nics"); then
+        fatal 'could not parse sdc:nics as JSON'
+    fi
+
+    printf '%s' "$admin_nic"
+    return 0
+}
+
+# TODO: should probably do some more error checking here in the event that
+# 'mac' or 'ip' are not in the nic object
+function get_admin_mac {
+    printf '%s' "$(get_admin_nic | json mac)"
+    return 0
+}
+
+function get_admin_ip {
+    printf '%s' "$(get_admin_nic | json ip)"
+    return 0
+}
+
 function setup_config_agent
 {
     local dirlist=${CONFIG_AGENT_LOCAL_MANIFESTS_DIRS:-}
@@ -323,19 +353,14 @@ function upload_values
 #
 function download_metadata
 {
-    local sdc_nics
     local admin_mac
     local url
     local i
 
-    if ! sdc_nics=$(_sdc_mdata_get sdc:nics); then
-        fatal 'could not get NIC information'
-    fi
-
-    if ! admin_mac=$(json -c 'this.nic_tag === "admin"' 0.mac \
-      <<< "$sdc_nics"); then
+    if ! admin_mac=$(get_admin_mac); then
         fatal 'could not parse sdc:nics as JSON'
     fi
+
     if [[ -z $admin_mac ]]; then
         warn "skipping download of SAPI metadata: don't have admin NIC"
         return 0
